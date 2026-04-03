@@ -1,0 +1,23 @@
+# openenv.yaml - Official OpenEnv Metadata
+name: "Nexus-Config-Env"
+version: "0.1.0"
+description: "An AI training environment for optimizing cloud resource configurations and security."
+author: "Vignesh E"
+tasks:
+  - id: "task_1_easy"
+    name: "The Ghost Hunter"
+    difficulty: "easy"
+  - id: "task_2_medium"
+    name: "The Security Patch"
+    difficulty: "medium"
+  - id: "task_3_hard"
+    name: "The Stability Architect"
+    difficulty: "hard"
+
+# These tell the evaluator how to run your environment
+runtime:
+  type: "http"
+  port: 7860
+  health_path: "/health"
+  reset_path: "/reset"
+  step_path: "/step"
