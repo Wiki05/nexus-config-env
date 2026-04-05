@@ -5,92 +5,100 @@ import httpx
 from openai import OpenAI
 from typing import List, Optional
 
-# 1. Configuration - Mandatory Environment Variables
-# These will be provided by the Hackathon platform during evaluation
+# Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
+ENV_URL = os.getenv("ENV_URL", "https://wiki05-nexus-config-env.hf.space")
 
-# This is your local/remote environment URL
-# Port 7860 is the Hugging Face standard we set in the Dockerfile
-ENV_URL = os.getenv("ENV_URL", "http://0.0.0.0:7860")
-
-# 2. Logging Helpers - Strict Format Required by Scaler/Meta
+# 2. Logging Helpers - Updated to 1 decimal place (0.0 - 1.0)
 def log_start(task: str, env: str, model: str):
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]):
     error_val = error if error else "null"
     done_val = str(done).lower()
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+    # Changed from :.2f to :.1f to match the 0.0 - 1.0 requirement
+    print(f"[STEP] step={step} action={action} reward={reward:.1f} done={done_val} error={error_val}", flush=True)
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]):
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+    rewards_str = ",".join(f"{r:.1f}" for r in rewards)
+    # Changed score from :.3f to :.1f
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.1f} rewards={rewards_str}", flush=True)
 
-# 3. The Inference Loop
-async def run_inference():
-    # Initialize OpenAI Client
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-    
-    task_name = "task_1_easy"
-    log_start(task=task_name, env="Nexus-Config-Env", model=MODEL_NAME)
+def clean_json_response(raw_content: str):
+    content = raw_content.strip()
+    if content.startswith("```json"):
+        content = content.replace("```json", "", 1).replace("```", "", 1).strip()
+    elif content.startswith("```"):
+        content = content.replace("```", "", 2).strip()
+    return content
+
+async def run_task(task_id: str, client, http_client):
+    log_start(task=task_id, env="Nexus-Config-Env", model=MODEL_NAME)
     
     steps_taken = 0
     rewards = []
-    success = False
     
-    async with httpx.AsyncClient(timeout=30.0) as http_client:
+    response = await http_client.post(f"{ENV_URL}/reset?task_id={task_id}")
+    observation = response.json()["observation"]
+    
+    for step_num in range(1, 3): 
+        steps_taken = step_num
+        
+        # Improved Prompt to ensure the AI picks the right target
+        prompt = f"""
+        Kubernetes YAML: {observation['dirty_yaml']}
+        
+        Goal: If memory is too high, fix 'memory'. If user is root, fix 'runAsUser'. If privileged is true, fix 'privileged'.
+        Return ONLY a JSON object:
+        "field": ("memory", "runAsUser", or "privileged"),
+        "value": (the corrected value),
+        "type": ("security" or "cost")
+        """
+        
         try:
-            # Step A: Reset the environment
-            response = await http_client.post(f"{ENV_URL}/reset?task_id={task_name}")
-            data = response.json()
-            observation = data["observation"]
+            completion = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}]
+            )
             
-            # Step B: Play the "Game" for 4 steps
-            for step_num in range(1, 5):
-                steps_taken = step_num
-                
-                # Ask the LLM what to do based on the dirty YAML
-                prompt = f"Identify the resource waste in this YAML: {observation['dirty_yaml']}. Return the field name only."
-                
-                completion = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                action_text = completion.choices[0].message.content.strip()
-                
-                # Prepare the action for your FastAPI server
-                # We simulate the fields for this baseline script
-                action_payload = {
-                    "fix_type": "cost",
-                    "target_field": "memory",
-                    "new_value": "256Mi",
-                    "reasoning": f"Optimizing based on LLM suggestion: {action_text}"
-                }
-                
-                # Step C: Send action to the environment
-                step_response = await http_client.post(f"{ENV_URL}/step", json=action_payload)
-                step_data = step_response.json()
-                
-                reward = step_data["reward"]
-                done = step_data["done"]
-                observation = step_data["observation"]
-                
-                rewards.append(reward)
-                log_step(step=step_num, action=action_text, reward=reward, done=done, error=None)
-                
-                if done:
-                    break
+            raw_text = completion.choices[0].message.content
+            json_text = clean_json_response(raw_text)
+            ai_decision = json.loads(json_text)
             
-            # Final scoring logic
-            total_score = sum(rewards)
-            success = total_score >= 1.0
-            log_end(success=success, steps=steps_taken, score=total_score, rewards=rewards)
-
+            action_payload = {
+                "fix_type": ai_decision.get("type", "cost"),
+                "target_field": ai_decision.get("field", "unknown"),
+                "new_value": str(ai_decision.get("value", "")),
+                "reasoning": "Standardizing config"
+            }
+            
+            step_response = await http_client.post(f"{ENV_URL}/step", json=action_payload)
+            step_data = step_response.json()
+            
+            reward = step_data["reward"]
+            done = step_data["done"]
+            observation = step_data["observation"]
+            
+            rewards.append(reward)
+            log_step(step=step_num, action=ai_decision.get("field", "none"), reward=reward, done=done, error=None)
+            
+            if done: break
+            
         except Exception as e:
-            log_end(success=False, steps=steps_taken, score=0.0, rewards=rewards)
-            print(f"[DEBUG] Error occurred: {e}")
+            log_step(step=step_num, action="error", reward=0.0, done=False, error=str(e))
+            break
+
+    total_score = sum(rewards)
+    log_end(success=(total_score >= 1.0), steps=steps_taken, score=total_score, rewards=rewards)
+
+async def main():
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    async with httpx.AsyncClient(timeout=30.0) as http_client:
+        for task in ["task_1_easy", "task_2_medium", "task_3_hard"]:
+            await run_task(task, client, http_client)
+            print("-" * 30)
 
 if __name__ == "__main__":
-    asyncio.run(run_inference())
+    asyncio.run(main())
