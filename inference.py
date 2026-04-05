@@ -5,25 +5,23 @@ import httpx
 from openai import OpenAI
 from typing import List, Optional
 
-# Configuration
+# 1. Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 ENV_URL = os.getenv("ENV_URL", "https://wiki05-nexus-config-env.hf.space")
 
-# 2. Logging Helpers - Updated to 1 decimal place (0.0 - 1.0)
+# 2. Logging Helpers
 def log_start(task: str, env: str, model: str):
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]):
     error_val = error if error else "null"
     done_val = str(done).lower()
-    # Changed from :.2f to :.1f to match the 0.0 - 1.0 requirement
     print(f"[STEP] step={step} action={action} reward={reward:.1f} done={done_val} error={error_val}", flush=True)
 
 def log_end(success: bool, steps: int, score: float, rewards: List[float]):
     rewards_str = ",".join(f"{r:.1f}" for r in rewards)
-    # Changed score from :.3f to :.1f
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.1f} rewards={rewards_str}", flush=True)
 
 def clean_json_response(raw_content: str):
@@ -34,30 +32,37 @@ def clean_json_response(raw_content: str):
         content = content.replace("```", "", 2).strip()
     return content
 
+# 3. Individual Task Logic
 async def run_task(task_id: str, client, http_client):
     log_start(task=task_id, env="Nexus-Config-Env", model=MODEL_NAME)
     
     steps_taken = 0
     rewards = []
     
-    response = await http_client.post(f"{ENV_URL}/reset?task_id={task_id}")
-    observation = response.json()["observation"]
-    
-    for step_num in range(1, 3): 
-        steps_taken = step_num
+    try:
+        # Step A: Reset with Status Check
+        response = await http_client.post(f"{ENV_URL}/reset?task_id={task_id}")
         
-        # Improved Prompt to ensure the AI picks the right target
-        prompt = f"""
-        Kubernetes YAML: {observation['dirty_yaml']}
+        if response.status_code != 200:
+            print(f"[DEBUG] Server not ready (Status {response.status_code}). Wait for HF Space to turn GREEN.")
+            log_end(success=False, steps=0, score=0.0, rewards=[])
+            return
+
+        observation = response.json()["observation"]
         
-        Goal: If memory is too high, fix 'memory'. If user is root, fix 'runAsUser'. If privileged is true, fix 'privileged'.
-        Return ONLY a JSON object:
-        "field": ("memory", "runAsUser", or "privileged"),
-        "value": (the corrected value),
-        "type": ("security" or "cost")
-        """
-        
-        try:
+        # Step B: Solving Loop
+        for step_num in range(1, 3): 
+            steps_taken = step_num
+            
+            prompt = f"""
+            Kubernetes YAML: {observation['dirty_yaml']}
+            Goal: If memory is too high, fix 'memory'. If user is root, fix 'runAsUser'. If privileged is true, fix 'privileged'.
+            Return ONLY a JSON object:
+            "field": ("memory", "runAsUser", or "privileged"),
+            "value": (the corrected value),
+            "type": ("security" or "cost")
+            """
+            
             completion = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[{"role": "user", "content": prompt}]
@@ -74,6 +79,7 @@ async def run_task(task_id: str, client, http_client):
                 "reasoning": "Standardizing config"
             }
             
+            # Step C: Send Action
             step_response = await http_client.post(f"{ENV_URL}/step", json=action_payload)
             step_data = step_response.json()
             
@@ -86,13 +92,14 @@ async def run_task(task_id: str, client, http_client):
             
             if done: break
             
-        except Exception as e:
-            log_step(step=step_num, action="error", reward=0.0, done=False, error=str(e))
-            break
+        total_score = sum(rewards)
+        log_end(success=(total_score >= 1.0), steps=steps_taken, score=total_score, rewards=rewards)
 
-    total_score = sum(rewards)
-    log_end(success=(total_score >= 1.0), steps=steps_taken, score=total_score, rewards=rewards)
+    except Exception as e:
+        print(f"[DEBUG] Error during task {task_id}: {e}")
+        log_end(success=False, steps=steps_taken, score=0.0, rewards=rewards)
 
+# 4. Main Loop
 async def main():
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
     async with httpx.AsyncClient(timeout=30.0) as http_client:
