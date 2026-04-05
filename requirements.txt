@@ -2,5 +2,6 @@ fastapi
 uvicorn
 pydantic
 openai
-openenv-core
+openenv-core>=0.2.3
 pyyaml
+httpx

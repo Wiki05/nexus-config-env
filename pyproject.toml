@@ -1,0 +1,28 @@
+[project]
+name = "nexus-config-env"
+version = "0.1.0"
+description = "Nexus Configuration Environment for OpenEnv Hackathon"
+authors = [
+    { name = "Vignesh E", email = "vigneshdev1022@gmail.com" }
+]
+# Added version requirement here
+dependencies = [
+    "openenv-core>=0.2.3",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "openai",
+    "pydantic",
+    "pyyaml"
+]
+
+# This is what the [FAIL] message was asking for!
+[project.scripts]
+server = "server.app:main"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.openenv]
+entry_point = "server.app:app"
