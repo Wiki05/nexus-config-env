@@ -20,6 +20,14 @@ async def step(action: NexusAction):
 
 # --- 🚀 VALIDATOR FIXES (DO NOT REMOVE) ---
 
+@app.get("/")
+async def root():
+    return {
+        "message": "Nexus-Config-Env API is Online",
+        "version": "0.1.0",
+        "docs": "/docs"
+    }
+
 @app.get("/health")
 async def health():
     # Validator looks for "healthy" status specifically
