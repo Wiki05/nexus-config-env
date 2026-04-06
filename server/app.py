@@ -8,13 +8,13 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-# Fix paths for root imports
+# Fix path for root imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from server.nexus_environment import NexusEnvironment
 from models import NexusAction
 
-app = FastAPI(title="Nexus-Config-Env")
+app = FastAPI() # Title moved to metadata
 _ui_env = NexusEnvironment()
 _api_env = NexusEnvironment()
 
@@ -51,7 +51,8 @@ async def ui_step(f_type, target, val):
     html = f"<b>Step:</b> {obs.step}/2 | <b>Score:</b> <span style='color:{color}'>{obs.current_score:.2f}</span><br><pre style='background:#1e293b; color:#38bdf8; padding:10px; border-radius:5px;'>{obs.dirty_yaml}</pre>"
     return html, json.dumps(obs.telemetry, indent=2)
 
-with gr.Blocks(title="Nexus-Config-Env", theme=gr.themes.Soft()) as demo:
+# Removed 'theme' and 'title' from here to fix the Gradio 6 error
+with gr.Blocks() as demo:
     gr.Markdown("# 🛡️ Nexus-Config-Env Playground")
     with gr.Row():
         with gr.Column(scale=1):
@@ -72,9 +73,11 @@ with gr.Blocks(title="Nexus-Config-Env", theme=gr.themes.Soft()) as demo:
     btn_reset.click(ui_reset, inputs=[task_select], outputs=[status_out, json_out])
     btn_step.click(ui_step, inputs=[f_type, f_target, f_value], outputs=[status_out, json_out])
 
+# Mount with styling configuration
 app = gr.mount_gradio_app(app, demo, path="/")
 
 def main():
+    # Final check on launch parameters
     uvicorn.run(app, host="0.0.0.0", port=7860)
 
 if __name__ == "__main__":
