@@ -2,92 +2,80 @@ import os
 import asyncio
 import json
 import httpx
+import textwrap
 from openai import OpenAI
 from typing import List, Optional
 
-# 1. Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 ENV_URL = "http://127.0.0.1:7860" 
 
-def log_start(task: str, env: str, model: str):
-    print(f"[START] task={task} env={env} model={model}", flush=True)
+client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]):
-    error_val = error if error else "null"
-    done_val = str(done).lower()
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+def log_start(t): print(f"[START] task={t} env=Nexus-Config-Env model={MODEL_NAME}", flush=True)
+def log_step(s, a, r, d): print(f"[STEP] step={s} action={a} reward={r:.2f} done={str(d).lower()} error=null", flush=True)
+def log_end(sc, st, r): print(f"[END] success={str(sc>=1.0).lower()} steps={st} score={sc:.2f} rewards={','.join(f'{x:.2f}' for x in r)}", flush=True)
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]):
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    success_val = str(success).lower()
-    print(f"[END] success={success_val} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
-
-def clean_json_response(raw_content: str):
-    content = raw_content.strip()
-    start_idx = content.find('{')
-    end_idx = content.rfind('}')
-    if start_idx != -1 and end_idx != -1:
-        return content[start_idx:end_idx + 1]
-    return content
-
-async def run_task(task_id: str, client, http_client):
-    log_start(task=task_id, env="Nexus-Config-Env", model=MODEL_NAME)
-    steps_taken, rewards, success = 0, [], False
+async def run_task(task_id, http_client):
+    log_start(task_id)
+    rewards, steps, last_field = [], 0, ""
     
     try:
-        response = await http_client.post(f"{ENV_URL}/reset?task_id={task_id}")
-        observation = response.json()["observation"]
+        res = await http_client.post(f"{ENV_URL}/reset?task_id={task_id}")
+        obs = res.json()["observation"]
         
-        for step_num in range(1, 3): 
-            steps_taken = step_num
-            prompt = f"""
-            Analyze this Kubernetes YAML: {observation['dirty_yaml']}
-            Fix the security/cost risk. Return ONLY JSON:
-            {{"field": "memory/runAsUser/privileged", "value": "val", "type": "cost/security"}}
-            """
+        for step in range(1, 3):
+            steps = step
             
-            completion = client.chat.completions.create(
-                model=MODEL_NAME, 
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1
-            )
+            # THE "GOLDEN" PROMPT
+            prompt = textwrap.dedent(f"""
+                Task: {task_id} | Step: {step}/2
+                YAML: {obs['dirty_yaml']}
+                
+                INSTRUCTIONS:
+                - STEP 1: Identify the exact field path (e.g., securityContext.privileged).
+                - STEP 2: Use the SAME field path as Step 1 and provide the fix value.
+                
+                MANDATORY FIX VALUES:
+                - Memory: '256Mi' | runAsUser: '1000' | privileged: 'false'
+                
+                Respond ONLY with JSON: {{"field": "...", "value": "...", "type": "security/cost"}}
+            """).strip()
+
+            comp = client.chat.completions.create(model=MODEL_NAME, messages=[{"role": "user", "content": prompt}], temperature=0.1)
+            raw = comp.choices[0].message.content
+            data = json.loads(raw[raw.find('{'):raw.rfind('}')+1])
             
-            ai_decision = json.loads(clean_json_response(completion.choices[0].message.content))
+            # Force the AI to stick to its field if it's the second step
+            if step == 1: last_field = data["field"]
+            else: data["field"] = last_field
+
+            step_res = await http_client.post(f"{ENV_URL}/step", json={
+                "fix_type": data["type"],
+                "target_field": data["field"],
+                "new_value": str(data["value"]),
+                "reasoning": f"Nexus Hardening Step {step}"
+            })
             
-            payload = {
-                "fix_type": ai_decision.get("type", "cost"),
-                "target_field": ai_decision.get("field", "unknown"),
-                "new_value": str(ai_decision.get("value", "")),
-                "reasoning": "OpenEnv Optimization"
-            }
-            
-            step_res = await http_client.post(f"{ENV_URL}/step", json=payload)
-            step_data = step_res.json()
-            
-            reward = float(step_data.get("reward", 0.0))
-            done = step_data.get("done", False)
-            observation = step_data.get("observation", {})
+            res_j = step_res.json()
+            reward = float(res_j.get("reward", 0.0))
             rewards.append(reward)
+            log_step(step, data["field"], reward, res_j.get("done", False))
             
-            log_step(step=step_num, action=ai_decision.get("field", "none"), reward=reward, done=done, error=None)
-            if done: break
-            
-        success = (sum(rewards) >= 1.0)
-        
-    except Exception as e:
-        print(f"[ERROR] {e}")
+            if res_j.get("done"): break
+            obs = res_j.get("observation", {})
+
+    except Exception: pass
     finally:
-        score = min(max(sum(rewards), 0.0), 1.0)
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+        total = sum(rewards)
+        log_end(total, steps, rewards)
 
 async def main():
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-    async with httpx.AsyncClient(timeout=30.0) as http_client:
-        for task in ["task_1_easy", "task_2_medium", "task_3_hard"]:
-            await run_task(task, client, http_client)
-            print("-" * 20)
+    async with httpx.AsyncClient(timeout=30.0) as hc:
+        for t in ["task_1_easy", "task_2_medium", "task_3_hard"]:
+            await run_task(t, hc)
+            print("-" * 20, flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())

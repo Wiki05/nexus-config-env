@@ -1,7 +1,10 @@
-fastapi
-uvicorn
-pydantic
-openai
+fastapi==0.110.0
+uvicorn[standard]==0.27.1
+pydantic==2.6.3
+openai==1.13.3
 openenv-core>=0.2.3
 pyyaml
 httpx
+gradio==6.0.0
+python-dotenv
+jinja2
