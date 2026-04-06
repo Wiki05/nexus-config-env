@@ -27,35 +27,28 @@ async def run_task(task_id, http_client):
         
         for step in range(1, 3):
             steps = step
-            
-            # THE "GOLDEN" PROMPT
             prompt = textwrap.dedent(f"""
                 Task: {task_id} | Step: {step}/2
                 YAML: {obs['dirty_yaml']}
                 
-                INSTRUCTIONS:
+                GOAL:
                 - STEP 1: Identify the exact field path (e.g., securityContext.privileged).
-                - STEP 2: Use the SAME field path as Step 1 and provide the fix value.
+                - STEP 2: Use SAME path as Step 1 and provide the fix value.
                 
-                MANDATORY FIX VALUES:
-                - Memory: '256Mi' | runAsUser: '1000' | privileged: 'false'
-                
-                Respond ONLY with JSON: {{"field": "...", "value": "...", "type": "security/cost"}}
+                FIX VALUES: Memory: '256Mi' | runAsUser: '1000' | privileged: 'false'
+                Respond ONLY JSON: {{"field": "...", "value": "...", "type": "security/cost"}}
             """).strip()
 
             comp = client.chat.completions.create(model=MODEL_NAME, messages=[{"role": "user", "content": prompt}], temperature=0.1)
             raw = comp.choices[0].message.content
             data = json.loads(raw[raw.find('{'):raw.rfind('}')+1])
             
-            # Force the AI to stick to its field if it's the second step
             if step == 1: last_field = data["field"]
             else: data["field"] = last_field
 
             step_res = await http_client.post(f"{ENV_URL}/step", json={
-                "fix_type": data["type"],
-                "target_field": data["field"],
-                "new_value": str(data["value"]),
-                "reasoning": f"Nexus Hardening Step {step}"
+                "fix_type": data["type"], "target_field": data["field"],
+                "new_value": str(data["value"]), "reasoning": "Hardening"
             })
             
             res_j = step_res.json()
