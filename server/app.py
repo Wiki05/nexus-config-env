@@ -1,4 +1,3 @@
-import os
 import sys
 import json
 import uvicorn
@@ -7,129 +6,646 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-# Fix path for root imports to ensure Docker/HF pathing works
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from server.nexus_environment import NexusEnvironment
 from models import NexusAction
 
-# 1. Initialize FastAPI and Dual Environments
-# _api_env is for the automated grader; _ui_env is for your browser testing.
-app = FastAPI(title="Nexus-Config-Env")
+app = FastAPI(title="Nexus-Config-Env", version="0.1.0")
+
 _ui_env = NexusEnvironment()
 _api_env = NexusEnvironment()
 
-# --- 🚀 MANDATORY API ROUTES (Evaluator Endpoints) ---
+MAX_STEPS = 2
+
 @app.get("/health")
-async def health(): 
+async def health():
     return {"status": "healthy"}
 
+
 @app.get("/metadata")
-async def metadata(): 
-    return {"name": "Nexus-Config-Env", "version": "0.1.0"}
+async def metadata():
+    return {
+        "name": "Nexus-Config-Env",
+        "description": "Kubernetes YAML optimization and security hardening environment.",
+        "version": "0.1.0",
+        "tasks": [
+            {"id": "task_1_easy", "difficulty": "easy", "name": "Ghost Hunter"},
+            {"id": "task_2_medium", "difficulty": "medium", "name": "Security Patch"},
+            {"id": "task_3_hard", "difficulty": "hard", "name": "Privilege Patch"},
+        ],
+    }
+
 
 @app.post("/reset")
 async def api_reset(task_id: str = "task_1_easy"):
     obs = await _api_env.reset(task_id)
-    return JSONResponse({"observation": obs.model_dump(), "reward": 0.0, "done": False})
+    return JSONResponse(
+        {
+            "observation": obs.model_dump(),
+            "reward": 0.0,
+            "done": False,
+        }
+    )
+
 
 @app.post("/step")
 async def api_step(request: Request):
     body = await request.json()
+
+    if _api_env.current_scenario is None:
+        return JSONResponse(
+            {
+                "observation": None,
+                "reward": 0.0,
+                "done": False,
+                "info": {"warning": "No active scenario. Call /reset first."},
+            }
+        )
+
+    current_obs = _api_env._get_obs()
+    if bool(getattr(current_obs, "done", False)) or int(getattr(current_obs, "step", 0)) >= MAX_STEPS:
+        return JSONResponse(
+            {
+                "observation": current_obs.model_dump(),
+                "reward": 0.0,
+                "done": True,
+                "info": {"warning": "Task already completed. Please reset to start again."},
+            }
+        )
+
     action = NexusAction(**body)
     obs, reward, done, info = await _api_env.step(action)
-    return JSONResponse({"observation": obs.model_dump(), "reward": float(reward), "done": bool(done), "info": info})
 
-# --- 🎨 UI LOGIC (Adaptive Styling) ---
-async def ui_reset(task_id):
-    obs = await _ui_env.reset(task_id)
-    return _format_md(obs), obs.dirty_yaml, json.dumps(obs.telemetry, indent=2)
+    return JSONResponse(
+        {
+            "observation": obs.model_dump(),
+            "reward": round(float(reward), 2),
+            "done": bool(done),
+            "info": info,
+        }
+    )
 
-async def ui_step(f_type, target, val):
-    action = NexusAction(fix_type=f_type, target_field=target, new_value=val, reasoning="UI Fix")
-    obs, reward, done, _ = await _ui_env.step(action)
-    return _format_md(obs), obs.dirty_yaml, json.dumps(obs.telemetry, indent=2)
 
-async def ui_get_state():
-    if not _ui_env.current_scenario: return "### 💤 System Ready", "", "{}"
-    obs = _ui_env._get_obs()
-    return _format_md(obs), obs.dirty_yaml, json.dumps(obs.telemetry, indent=2)
+@app.get("/state")
+async def api_state():
+    if _api_env.current_scenario is None:
+        return {
+            "has_active_task": False,
+            "task_id": None,
+            "step": 0,
+            "observation": None,
+        }
+
+    obs = _api_env._get_obs()
+    task_id = getattr(_api_env, "current_task_id", None)
+
+    return {
+        "has_active_task": True,
+        "task_id": task_id,
+        "step": min(int(getattr(obs, "step", 0)), MAX_STEPS),
+        "observation": obs.model_dump(),
+    }
+
+
+@app.get("/schema")
+async def api_schema():
+    return {
+        "action": NexusAction.model_json_schema(),
+        "observation": {
+            "type": "object",
+            "properties": {
+                "dirty_yaml": {"type": "string"},
+                "telemetry": {"type": "object"},
+                "step": {"type": "integer"},
+                "done": {"type": "boolean"},
+                "current_score": {"type": "number"},
+            },
+        },
+        "state": {
+            "type": "object",
+            "properties": {
+                "has_active_task": {"type": "boolean"},
+                "task_id": {"type": ["string", "null"]},
+                "step": {"type": "integer"},
+            },
+        },
+    }
+
+
+@app.post("/mcp")
+async def mcp(request: Request):
+    body = await request.json()
+    request_id = body.get("id")
+    method = body.get("method", "")
+
+    if method == "ping":
+        result = {"status": "ok", "name": "Nexus-Config-Env"}
+    else:
+        result = {"status": "ok"}
+
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": result,
+    }
+
+def _safe_json(data):
+    try:
+        return json.dumps(data, indent=2, default=str)
+    except Exception:
+        return "{}"
+
 
 def _format_md(obs):
-    status = "✅ COMPLETED" if obs.done else "🚀 IN-PROGRESS"
-    return f"**Score:** {obs.current_score:.2f} / 1.00  |  **Step:** {obs.step}/2  |  **Status:** {status}"
+    display_step = min(int(getattr(obs, "step", 0)), MAX_STEPS)
+    current_score = float(getattr(obs, "current_score", 0.0))
+    done = bool(getattr(obs, "done", False)) or display_step >= MAX_STEPS
+    status = "✅ COMPLETED" if done else "🚀 IN-PROGRESS"
+    return (
+        f"**Score:** {current_score:.2f} / 1.00"
+        f" | **Step:** {display_step}/{MAX_STEPS}"
+        f" | **Status:** {status}"
+    )
 
-# --- 🏗️ GRADIO LAYOUT (Bootcamp Style) ---
-with gr.Blocks(title="Nexus-Config-Env") as demo:
+
+def _build_ui_state_payload(obs):
+    scenario = getattr(_ui_env, "current_scenario", None)
+    task_id = getattr(_ui_env, "current_task_id", None)
+    raw_step = int(getattr(obs, "step", 0))
+    capped_step = min(raw_step, MAX_STEPS)
+
+    return {
+        "has_active_task": scenario is not None,
+        "task_id": task_id,
+        "step": capped_step,
+        "raw_step": raw_step,
+        "done": bool(getattr(obs, "done", False)) or capped_step >= MAX_STEPS,
+        "current_score": float(getattr(obs, "current_score", 0.0)),
+        "telemetry": getattr(obs, "telemetry", {}),
+    }
+
+async def ui_reset(task_id):
+    try:
+        obs = await _ui_env.reset(task_id)
+        state_payload = _build_ui_state_payload(obs)
+        return (
+            _format_md(obs),
+            getattr(obs, "dirty_yaml", ""),
+            _safe_json(state_payload),
+        )
+    except Exception as e:
+        return f"### ❌ Error\n{str(e)}", "", _safe_json({"error": str(e)})
+
+
+async def ui_step(f_type, target, val):
+    if _ui_env.current_scenario is None:
+        return (
+            "### ⚠️ Warning\nClick **Reset** first.",
+            "",
+            _safe_json({"warning": "No active scenario. Click Reset first."}),
+        )
+
+    current_obs = _ui_env._get_obs()
+    current_step = int(getattr(current_obs, "step", 0))
+    current_done = bool(getattr(current_obs, "done", False))
+
+    if current_done or current_step >= MAX_STEPS:
+        state_payload = _build_ui_state_payload(current_obs)
+        state_payload["last_reward"] = 0.0
+        state_payload["info"] = {"warning": "Task already completed. Please click Reset to start again."}
+        return (
+            "### ✅ Task already completed\nClick **Reset** to try again.",
+            getattr(current_obs, "dirty_yaml", ""),
+            _safe_json(state_payload),
+        )
+
+    try:
+        action = NexusAction(
+            fix_type=f_type,
+            target_field=target,
+            new_value=val,
+            reasoning="UI Fix",
+        )
+        obs, reward, done, info = await _ui_env.step(action)
+
+        state_payload = _build_ui_state_payload(obs)
+        state_payload["last_reward"] = round(float(reward), 2)
+        state_payload["done"] = bool(done) or state_payload["step"] >= MAX_STEPS
+        state_payload["info"] = info
+
+        return (
+            _format_md(obs),
+            getattr(obs, "dirty_yaml", ""),
+            _safe_json(state_payload),
+        )
+    except Exception as e:
+        return f"### ❌ Logic Error\n{str(e)}", "", _safe_json({"error": str(e)})
+
+
+async def ui_get_state():
+    if _ui_env.current_scenario is None:
+        empty_state = {
+            "has_active_task": False,
+            "task_id": None,
+            "step": 0,
+            "raw_step": 0,
+            "done": False,
+            "current_score": 0.0,
+            "telemetry": {},
+        }
+        return (
+            "### 💤 System Ready\nClick **Reset** to begin.",
+            "",
+            _safe_json(empty_state),
+        )
+
+    try:
+        obs = _ui_env._get_obs()
+        state_payload = _build_ui_state_payload(obs)
+        return (
+            _format_md(obs),
+            getattr(obs, "dirty_yaml", ""),
+            _safe_json(state_payload),
+        )
+    except Exception as e:
+        return f"### ❌ State Error\n{str(e)}", "", _safe_json({"error": str(e)})
+
+with gr.Blocks() as demo:
+    demo.title = "Nexus-Config-Env | Kubernetes Hardening"
+
+    gr.HTML("""
+    <style>
+        /* Kill all browser-default arrows/spinners */
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+        
+        /* Keep your existing dark theme overrides */
+        .gradio-container input[type="text"],
+        .gradio-container textarea {
+            background-color: #1f1f1f !important;
+            color: #ffffff !important;
+            border: 1px solid #444 !important;
+        }
+    </style>
+    """)
+
     with gr.Row():
-        # SIDEBAR (LEFT)
         with gr.Column(scale=1, variant="panel"):
-            with gr.Accordion("🚀 Quick Start", open=True):
-                gr.Markdown("### Connect to Environment")
-                gr.Markdown("Connect from Python using the `OpenEnv` SDK:")
-                gr.Code(value="from openenv import OpenEnv\nenv = OpenEnv.from_env('Wiki05/nexus-config-env')", language="python")
-                gr.Markdown("---")
-                gr.Markdown("### Fork & Contribute")
-                gr.Code(value="openenv fork Wiki05/nexus-config-env", language="shell")
-            
-            with gr.Accordion("📖 README", open=True):
+            with gr.Accordion("Quick Start", open=False):
                 gr.Markdown("""
-                ### 🛡️ Nexus-Config-Env
-                Nexus-Config-Env addresses the critical need for automated security posture management in cloud-native infrastructures by training agents to prevent misconfigurations before deployment.
-                
-                **Observation Space:** Raw Kubernetes YAML configurations containing hidden vulnerabilities or cost inefficiencies.
-                
-                **Tasks Enrolled:**
-                1. **Ghost Hunter (Easy):** Identifying and fixing legacy memory/CPU requests to optimize cluster footprint.
-                2. **Security Patch (Medium):** Enforcing `runAsNonRoot` and removing `privileged` flags in container specs.
-                3. **Stability Architect (Hard):** Correcting multi-layered infrastructure tags to ensure cluster high-availability.
-                
-                **Reward Function:**
-                Dense reward signal: **0.50** for correct field identification; **1.00** for successful mitigation.
-                """)
-            
-            gr.Markdown("---")
-            gr.Markdown("Built by **Wiki05** | Meta PyTorch OpenEnv 2026")
+                ## Quick Start
 
-        # MAIN PANEL (RIGHT)
-        with gr.Column(scale=3):
-            gr.Markdown("# 🚀 Nexus-Config-Env Playground")
-            gr.Markdown("Select a scenario and click **Reset** to begin. Use **Step** to apply hardening fixes.")
-            
+                ### What this playground does
+                This environment simulates real Kubernetes hardening tasks.
+                The agent must inspect a broken YAML configuration, use telemetry/context, and apply the correct fix.
+
+                ### How to use
+                1. Select a task from the dropdown.
+                2. Click Reset to load the scenario.
+                3. Read the Current YAML State.
+                4. Check the Raw JSON Response for telemetry and state.
+                5. Enter:
+                - Fix Category
+                - Field Path
+                - New Value
+                6. Click Step.
+                7. Use Get state anytime to inspect the current environment state without applying a new action.
+
+                ### Task IDs
+                - `task_1_easy` → Ghost Hunter
+                - `task_2_medium` → Security Patch
+                - `task_3_hard` → Privilege Patch
+
+                ### Fix Category values
+                - `cost` → resource optimization issues
+                - `security` → root / privilege / access issues
+                - `stability` → deployment reliability style issues
+
+                ### Example inputs
+
+                Easy task:
+                - Fix Category: `cost`
+                - Field Path: `resources.requests.memory`
+                - New Value: `256Mi`
+
+                Medium task:
+                - Fix Category: `security`
+                - Field Path: `securityContext.runAsUser`
+                - New Value: `1000`
+
+                Hard task:
+                - Fix Category: `security`
+                - Field Path: `securityContext.privileged`
+                - New Value: `false`
+
+                ### Output sections
+                - Status → shows score, step count, and completion state
+                - Current YAML State → shows the latest YAML after reset/fix
+                - Raw JSON Response → shows internal state like task id, step, score, done flag, telemetry, and reward
+
+                ### API endpoints
+                - `GET /health`
+                - `GET /metadata`
+                - `GET /schema`
+                - `GET /state`
+                - `POST /reset`
+                - `POST /step`
+                - `POST /mcp`
+            """)
+                gr.Code(
+                    value="from openenv import OpenEnv\nenv = OpenEnv.from_env('Wiki05/nexus-config-env')",
+                    language="python",
+                )
+
+            with gr.Accordion("README & Documentation", open=True):
+                gr.Markdown("""
+                    # Nexus-Config-Env
+
+                    Nexus-Config-Env is a real-world OpenEnv environment for Kubernetes configuration hardening.
+
+                    It is designed to evaluate whether an agent can inspect infrastructure configuration, understand the problem, and apply the correct remediation through structured interaction.
+
+                    This environment focuses on practical issues that platform or DevOps engineers actually handle, such as:
+                    - over-provisioned memory requests
+                    - containers running as root
+                    - unnecessary privileged access
+
+                    ## Project Goal
+
+                    The goal of this environment is to test whether an agent can:
+                    1. inspect a broken Kubernetes YAML
+                    2. use telemetry and context signals
+                    3. identify the misconfigured field
+                    4. apply the correct fix
+                    5. complete the task within the allowed step budget
+
+                    This makes the environment useful for evaluating practical infrastructure-hardening behavior, not just toy actions.
+
+                    ## Tasks
+
+                    ### `task_1_easy` — Ghost Hunter
+                    This task focuses on resource cost optimization.
+
+                    Problem:
+                    The application uses only a small amount of memory, but the YAML requests far too much.
+
+                    Typical issue:
+                    `resources.requests.memory: 8Gi`
+
+                    Telemetry example:
+                    - average memory usage around `100 MB`
+                    - peak memory usage around `200 MB`
+
+                    Expected fix:
+                    - Fix Category: `cost`
+                    - Field Path: `resources.requests.memory`
+                    - New Value: `256Mi`
+
+                    ### `task_2_medium` — Security Patch
+                    This task focuses on root-user security risk.
+
+                    Problem:
+                    The container is running as root.
+
+                    Typical issue:
+                    `securityContext.runAsUser: 0`
+
+                    Telemetry example:
+                    - `is_root = true`
+                    - `user_id = 0`
+
+                    Expected fix:
+                    - Fix Category: `security`
+                    - Field Path: `securityContext.runAsUser`
+                    - New Value: `1000`
+
+                    ### `task_3_hard` — Privilege Patch
+                    This task focuses on privileged container access.
+
+                    Problem:
+                    The container has unnecessary privileged access enabled.
+
+                    Typical issue:
+                    `securityContext.privileged: true`
+
+                    Telemetry example:
+                    - `privileged_status = true`
+
+                    Expected fix:
+                    - Fix Category: `security`
+                    - Field Path: `securityContext.privileged`
+                    - New Value: `false`
+
+                    ## Input Fields
+
+                    ### Action (Select Hardening Task)
+                    This dropdown selects which scenario to run.
+
+                    Possible values:
+                    - `task_1_easy`
+                    - `task_2_medium`
+                    - `task_3_hard`
+
+                    ### Fix Category
+                    This describes the type of issue the action is targeting.
+
+                    Possible values:
+                    - `cost`
+                    - `security`
+                    - `stability`
+
+                    ### Field Path
+                    This is the YAML field that the agent wants to modify.
+
+                    Examples:
+                    - `resources.requests.memory`
+                    - `securityContext.runAsUser`
+                    - `securityContext.privileged`
+
+                    ### New Value
+                    This is the corrected value to apply to the selected field.
+
+                    Examples:
+                    - `256Mi`
+                    - `1000`
+                    - `false`
+
+                    ## Buttons
+
+                    ### Reset
+                    Loads the selected task and starts a new episode.
+
+                    It:
+                    - resets step count
+                    - resets score
+                    - loads the initial YAML
+                    - loads the initial telemetry/state
+
+                    Use this before pressing Step.
+
+                    ### Step
+                    Submits the entered action to the environment.
+
+                    It:
+                    - reads the chosen fix category
+                    - reads the field path
+                    - reads the new value
+                    - evaluates the action
+                    - updates score and progress
+                    - updates YAML when the final fix is correct
+
+                    ### Get state
+                    Returns the current environment state without applying a new action.
+
+                    It is useful for:
+                    - checking progress
+                    - verifying the active task
+                    - viewing current step count
+                    - viewing current score and telemetry
+
+                    ## Output Panels
+
+                    ### Status
+                    This is the human-readable summary of the current task progress.
+
+                    It shows:
+                    - current score
+                    - current step
+                    - whether the task is in progress or completed
+
+                    Example:
+                    - `Score: 0.50 / 1.00`
+                    - `Step: 1 / 2`
+                    - `Status: IN-PROGRESS`
+
+                    ### Current YAML State
+                    This shows the latest Kubernetes YAML currently being evaluated.
+
+                    It helps answer:
+                    - what broken configuration was loaded
+                    - whether the fix changed the YAML
+                    - what the current YAML looks like now
+
+                    Example after a successful final fix:
+                    `securityContext.runAsUser: 1000`
+
+                    ### Raw JSON Response (Telemetry / State)
+                    This shows the machine-readable internal state of the environment.
+
+                    Typical fields:
+                    - `has_active_task`
+                    - `task_id`
+                    - `step`
+                    - `raw_step`
+                    - `done`
+                    - `current_score`
+                    - `telemetry`
+                    - `last_reward`
+                    - `info`
+
+                    This section is useful for:
+                    - debugging
+                    - checking score progression
+                    - verifying step transitions
+                    - confirming whether a task is completed
+
+                    ## Reward Logic
+
+                    This environment uses a short 2-step workflow:
+                    - Step 1: identify the correct field
+                    - Step 2: apply the correct final value
+
+                    The score is accumulated across the task and capped at `1.00`.
+
+                    This creates a measurable remediation workflow rather than a one-shot guess.
+
+                    ## API Endpoints
+
+                    Available endpoints:
+                    - `GET /health`
+                    - `GET /metadata`
+                    - `GET /schema`
+                    - `GET /state`
+                    - `POST /reset`
+                    - `POST /step`
+                    - `POST /mcp`
+
+                    These support both UI interaction and automated evaluator or agent interaction.
+
+                    ## Why this environment is useful
+
+                    This environment turns real Kubernetes hardening problems into a reproducible evaluation setup.
+
+                    It measures whether an agent can:
+                    - inspect broken infrastructure config
+                    - use supporting telemetry
+                    - identify the correct field
+                    - apply the correct remediation
+                    - complete the task deterministically
+
+                    This makes it a practical benchmark for cloud configuration remediation agents.
+                """)
+
+            gr.Markdown("---")
+            gr.Markdown("Built by **[Wiki05](https://github.com/Wiki05)** | Meta OpenEnv 2026")
+
+        with gr.Column(scale=2):
+            gr.Markdown("# Nexus-Config-Env Playground")
+
             with gr.Group():
                 task_id = gr.Dropdown(
-                    choices=["task_1_easy", "task_2_medium", "task_3_hard"], 
-                    label="Action (Select Hardening Task)", 
-                    value="task_1_easy"
+                    choices=["task_1_easy", "task_2_medium", "task_3_hard"],
+                    label="Action (Select Hardening Task)",
+                    value="task_1_easy",
+                    interactive=True,
                 )
-                with gr.Row():
-                    f_type = gr.Radio(["security", "cost"], label="Fix Category", value="security")
-                    f_target = gr.Textbox(label="Field Path", placeholder="e.g., securityContext.runAsUser")
-                    f_value = gr.Textbox(label="New Value", placeholder="e.g., 1000")
 
-            # BUTTON ROW (Matches Bootcamp exactly)
+                f_type = gr.Radio(
+                    ["security", "cost", "stability"],
+                    label="Fix Category",
+                    value="security",
+                )
+
+                f_target = gr.Textbox(
+                    label="Field Path",
+                    placeholder="e.g., resources.requests.memory",
+                    lines=1,
+                    max_lines=1,
+                )
+
+                f_value = gr.Textbox(
+                    label="New Value",
+                    placeholder="e.g., 256Mi",
+                    lines=1,
+                    max_lines=1,
+                )
+
             with gr.Row():
-                btn_step = gr.Button("🚀 Step", variant="primary")
-                btn_reset = gr.Button("🔄 Reset")
-                btn_state = gr.Button("🔍 Get state")
+                btn_step = gr.Button("Step")
+                btn_reset = gr.Button("Reset")
+                btn_state = gr.Button("Get state")
 
-            gr.Markdown("### Environment Status")
-            status_summary = gr.Markdown("Click **Reset** to initialize the environment.")
+            gr.Markdown("### Status")
+            status_summary = gr.Markdown("Ready. Select a task and click Reset.")
             status_yaml = gr.Code(label="Current YAML State", language="yaml", interactive=False)
-            
-            with gr.Accordion("Raw JSON Response (Telemetry)", open=False):
+
+            with gr.Accordion("Raw JSON Response (Telemetry / State)", open=False):
                 json_out = gr.Code(label="", language="json")
 
-    # Event Bindings
     btn_reset.click(ui_reset, inputs=[task_id], outputs=[status_summary, status_yaml, json_out])
     btn_step.click(ui_step, inputs=[f_type, f_target, f_value], outputs=[status_summary, status_yaml, json_out])
-    btn_state.click(ui_get_state, outputs=[status_summary, status_yaml, json_out])
+    btn_state.click(ui_get_state, inputs=[], outputs=[status_summary, status_yaml, json_out])
 
-# 5. Mount and Run
 app = gr.mount_gradio_app(app, demo, path="/")
 
 def main():
-    # Use 0.0.0.0 for Docker/HF compatibility
     uvicorn.run(app, host="0.0.0.0", port=7860)
 
 if __name__ == "__main__":

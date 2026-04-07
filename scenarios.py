@@ -1,4 +1,3 @@
-# scenarios.py
 SCENARIOS = {
     "task_1_easy": [
         {
