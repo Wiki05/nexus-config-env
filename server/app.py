@@ -21,7 +21,12 @@ MAX_STEPS = 2
 
 @app.get("/")
 async def root():
-    return RedirectResponse(url="/web")
+    return RedirectResponse(url="/web/")
+
+
+@app.get("/web")
+async def web_redirect():
+    return RedirectResponse(url="/web/")
 
 
 @app.get("/health")
@@ -283,91 +288,42 @@ async def ui_get_state():
 with gr.Blocks() as demo:
     demo.title = "Nexus-Config-Env | Kubernetes Hardening"
 
-    gr.HTML("""
-    <style>
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-        input[type=number] {
-            -moz-appearance: textfield;
-        }
-
-        .gradio-container input[type="text"],
-        .gradio-container textarea {
-            background-color: #1f1f1f !important;
-            color: #ffffff !important;
-            border: 1px solid #444 !important;
-        }
-    </style>
-    """)
+    gr.Markdown("# Nexus-Config-Env Playground")
+    gr.Markdown("Interactive playground for Kubernetes YAML hardening tasks.")
 
     with gr.Row():
-        with gr.Column(scale=1, variant="panel"):
-            with gr.Accordion("Quick Start", open=False):
-                gr.Markdown("""
-                ## Quick Start
+        with gr.Column(scale=1):
+            task_id = gr.Dropdown(
+                choices=["task_1_easy", "task_2_medium", "task_3_hard"],
+                label="Task",
+                value="task_1_easy",
+            )
 
-                1. Select a task from the dropdown.
-                2. Click Reset to load the scenario.
-                3. Read the Current YAML State.
-                4. Check the Raw JSON Response.
-                5. Enter Fix Category, Field Path, and New Value.
-                6. Click Step.
-                7. Use Get state anytime.
+            f_type = gr.Radio(
+                ["security", "cost", "stability"],
+                label="Fix Category",
+                value="security",
+            )
 
-                ### Task IDs
-                - `task_1_easy` → Ghost Hunter
-                - `task_2_medium` → Security Patch
-                - `task_3_hard` → Privilege Patch
-                """)
+            f_target = gr.Textbox(
+                label="Field Path",
+                placeholder="e.g. securityContext.runAsUser",
+            )
 
-            gr.Markdown("---")
-            gr.Markdown("Built by **[Wiki05](https://github.com/Wiki05)** | Meta OpenEnv 2026")
-
-        with gr.Column(scale=2):
-            gr.Markdown("# Nexus-Config-Env Playground")
-
-            with gr.Group():
-                task_id = gr.Dropdown(
-                    choices=["task_1_easy", "task_2_medium", "task_3_hard"],
-                    label="Action (Select Hardening Task)",
-                    value="task_1_easy",
-                    interactive=True,
-                )
-
-                f_type = gr.Radio(
-                    ["security", "cost", "stability"],
-                    label="Fix Category",
-                    value="security",
-                )
-
-                f_target = gr.Textbox(
-                    label="Field Path",
-                    placeholder="e.g., resources.requests.memory",
-                    lines=1,
-                    max_lines=1,
-                )
-
-                f_value = gr.Textbox(
-                    label="New Value",
-                    placeholder="e.g., 256Mi",
-                    lines=1,
-                    max_lines=1,
-                )
+            f_value = gr.Textbox(
+                label="New Value",
+                placeholder="e.g. 1000",
+            )
 
             with gr.Row():
-                btn_step = gr.Button("Step")
                 btn_reset = gr.Button("Reset")
+                btn_step = gr.Button("Step")
                 btn_state = gr.Button("Get state")
 
-            gr.Markdown("### Status")
-            status_summary = gr.Markdown("Ready. Select a task and click Reset.")
-            status_yaml = gr.Code(label="Current YAML State", language="yaml", interactive=False)
-
-            with gr.Accordion("Raw JSON Response (Telemetry / State)", open=False):
-                json_out = gr.Code(label="", language="json")
+        with gr.Column(scale=2):
+            status_summary = gr.Markdown("Ready. Click Reset to begin.")
+            status_yaml = gr.Code(label="Current YAML State", language="yaml")
+            json_out = gr.Code(label="Raw JSON Response", language="json")
 
     btn_reset.click(ui_reset, inputs=[task_id], outputs=[status_summary, status_yaml, json_out])
     btn_step.click(ui_step, inputs=[f_type, f_target, f_value], outputs=[status_summary, status_yaml, json_out])
