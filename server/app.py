@@ -4,7 +4,7 @@ import uvicorn
 import gradio as gr
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -17,6 +17,16 @@ _ui_env = NexusEnvironment()
 _api_env = NexusEnvironment()
 
 MAX_STEPS = 2
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/web/")
+
+
+@app.get("/web")
+async def web_root():
+    return RedirectResponse(url="/web/")
 
 
 @app.get("/health")
@@ -285,7 +295,6 @@ with gr.Blocks() as demo:
             -webkit-appearance: none;
             margin: 0;
         }
-
         input[type=number] {
             -moz-appearance: textfield;
         }
@@ -647,7 +656,7 @@ This makes it a practical benchmark for cloud configuration remediation agents.
     btn_state.click(ui_get_state, inputs=[], outputs=[status_summary, status_yaml, json_out])
 
 
-app = gr.mount_gradio_app(app, demo, path="/")
+app = gr.mount_gradio_app(app, demo, path="/web")
 
 
 def main():
