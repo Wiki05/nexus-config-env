@@ -14,9 +14,10 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 ENV_URL = os.getenv("ENV_URL", "https://wiki05-nexus-config-env.hf.space")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-# Initialize Client
-client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+HF_TOKEN = os.getenv("HF_TOKEN")
+client = AsyncOpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 BENCHMARK = "Nexus-Config-Env"
 TASKS = ["task_1_easy", "task_2_medium", "task_3_hard"]
