@@ -4,9 +4,8 @@ emoji: 🛡️
 colorFrom: blue
 colorTo: indigo
 sdk: docker
-app_port: 7860
 pinned: false
-license: mit
+app_port: 7860
 ---
 
 # 🛡️ Nexus-Config-Env
@@ -88,8 +87,9 @@ $env:ENV_URL="[https://wiki05-nexus-config-env.hf.space](https://wiki05-nexus-co
 python inference.py
 
 ## Author
-Vignesh E
 
-GitHub: @Wiki05
-
-LinkedIn: vignesh-e-dev
+**Vignesh E**
+- GitHub: https://github.com/Wiki05
+- Email: vigneshdev1022@gmail.com
+- LinkedIn: https://www.linkedin.com/in/vignesh-e-dev/
+- Built for Meta x Scaler OpenEnv Hackathon 2026
