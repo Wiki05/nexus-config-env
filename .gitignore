@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.python-version
+nexus_config_env.egg-info/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Tooling/OS
+.DS_Store
+.lock

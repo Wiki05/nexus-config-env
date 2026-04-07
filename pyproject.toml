@@ -5,18 +5,21 @@ description = "Nexus Configuration Environment for OpenEnv Hackathon"
 authors = [
     { name = "Vignesh E", email = "vigneshdev1022@gmail.com" }
 ]
-# Added version requirement here
+requires-python = ">=3.11"
+
 dependencies = [
     "openenv-core>=0.2.3",
     "fastapi",
-    "uvicorn",
+    "uvicorn[standard]",
     "httpx",
     "openai",
     "pydantic",
-    "pyyaml"
+    "pyyaml",
+    "gradio>=6.0.0",
+    "python-dotenv",
+    "jinja2"
 ]
 
-# This is what the [FAIL] message was asking for!
 [project.scripts]
 server = "server.app:main"
 

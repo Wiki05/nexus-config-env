@@ -1,4 +1,3 @@
-# openenv.yaml - Official OpenEnv Metadata
 name: "Nexus-Config-Env"
 version: "0.1.0"
 description: "An AI training environment for optimizing cloud resource configurations and security."
@@ -11,10 +10,9 @@ tasks:
     name: "The Security Patch"
     difficulty: "medium"
   - id: "task_3_hard"
-    name: "The Stability Architect"
+    name: "The Privilege Patch"
     difficulty: "hard"
 
-# These tell the evaluator how to run your environment
 runtime:
   type: "http"
   port: 7860
