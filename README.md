@@ -10,91 +10,86 @@ license: mit
 ---
 
 # 🛡️ Nexus-Config-Env
-### **An OpenEnv-Compliant RL Environment for Kubernetes Configuration Hardening**
+### **Autonomous Kubernetes Hardening via Reinforcement Learning**
 
+[![OpenEnv Compliant](https://img.shields.io/badge/OpenEnv-v1.0--compliant-green)](https://github.com/scaler-school-of-technology/openenv-spec)
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/Wiki05/nexus-config-env)
-[![OpenAPI Docs](https://img.shields.io/badge/API-Documentation-green)](https://wiki05-nexus-config-env.hf.space/docs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
-**Nexus-Config-Env** is a professional-grade Reinforcement Learning environment built on the **OpenEnv** specification. It evaluates AI agents on real-world Kubernetes remediation tasks: fixing security vulnerabilities, eliminating resource waste, and enforcing infrastructure best practices.
-
----
-
-## 🚀 Live Environment
-* **Space URL:** [huggingface.co/spaces/Wiki05/nexus-config-env](https://huggingface.co/spaces/Wiki05/nexus-config-env)
-* **API Root:** `https://wiki05-nexus-config-env.hf.space`
-* **Interactive Playground:** [Playground](https://wiki05-nexus-config-env.hf.space)
+**Nexus-Config-Env** is a high-fidelity Reinforcement Learning (RL) environment designed to evaluate and train AI agents in the art of **Infrastructure-as-Code (IaC) Remediation**. Built on the OpenEnv specification, it challenges agents to identify and fix critical misconfigurations in Kubernetes manifests.
 
 ---
 
-## 💡 The Problem
-Cloud misconfiguration is a **$30 billion** annual problem. Nexus-Config-Env targets the three most common failures:
-1.  **Ghost RAM:** Reducing over-provisioned memory to save costs.
-2.  **Root Access:** Remediating `runAsUser: 0` security risks.
-3.  **Privileged Containers:** Eliminating unrestricted host access.
+## 🌐 Live Access & Docs
+* **Production Space:** [Wiki05/nexus-config-env](https://huggingface.co/spaces/Wiki05/nexus-config-env)
+* **Interactive API Docs:** `https://wiki05-nexus-config-env.hf.space/docs`
+* **Health Status:** `https://wiki05-nexus-config-env.hf.space/health`
 
 ---
 
-## 🛠️ Technical Specification
+## 💡 The Mission: Solving the $30B Cloud Leak
+Misconfigured Kubernetes clusters lead to massive security breaches and resource waste. Nexus-Config-Env focuses on three "Real-World" attack vectors:
 
-### Observation Space (`NexusObservation`)
-| Field | Type | Description |
+1.  **Resource Over-provisioning (Ghost RAM):** Cutting costs by aligning requested memory with actual telemetry data.
+2.  **Identity & Access (Root Containers):** Enforcing the principle of least privilege by shifting from `root` to non-privileged users.
+3.  **Kernel Isolation (Privileged Mode):** Closing container-escape vulnerabilities by stripping unnecessary host capabilities.
+
+---
+
+## 🏗️ Environment Architecture
+
+
+
+### 1. Observation Space (`NexusObservation`)
+| Attribute | Type | Impact |
 | :--- | :--- | :--- |
-| `config_id` | `str` | Unique ID for the current scenario. |
-| `dirty_yaml` | `str` | The Kubernetes manifest requiring fixing. |
-| `telemetry` | `dict` | Simulated runtime metrics (e.g., actual vs requested RAM). |
-| `current_score` | `float` | Cumulative reward for the episode. |
-| `done` | `bool` | Episode termination flag. |
+| `config_id` | `UUID` | Unique scenario identifier for reproducibility. |
+| `dirty_yaml` | `String` | The raw, vulnerable Kubernetes manifest. |
+| `telemetry` | `Dict` | Real-time usage metrics (RAM, CPU, Security Flags). |
+| `step` | `Integer` | Current progress within the 2-step remediation loop. |
 
-### Action Space (`NexusAction`)
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `target_field` | `str` | The YAML path to modify (e.g., `resources.requests.memory`). |
-| `new_value` | `str` | The corrected value (e.g., `256Mi`). |
-| `reasoning` | `str` | The agent's justification for the fix. |
+### 2. Action Space (`NexusAction`)
+Agents interact with the environment through structured JSON actions:
+* `target_field`: The exact YAML path (e.g., `securityContext.privileged`).
+* `new_value`: The hardened configuration value.
+* `type`: Categorization (Security, Cost, or Stability).
 
 ---
 
-## 📊 Evaluation & Tasks
-| Task ID | Name | Objective | Max Steps |
-| :--- | :--- | :--- | :---: |
-| `task_1_easy` | Ghost Hunter | Reduce RAM from 8Gi to 256Mi | 2 |
-| `task_2_medium` | Security Patch | Change `runAsUser` from 0 to 1000 | 2 |
-| `task_3_hard` | Privilege Patch | Set `privileged` to `false` | 2 |
-
-**Grading:** 0.50 for field identification + 0.50 for correct remediation. **Deterministic scoring.**
+## 📊 Grader Logic & Reward Shaping
+We use a **Deterministic Partial Reward** system to provide granular feedback to the agent:
+* **Identification (+0.50):** Awarded when the agent correctly targets the vulnerable field.
+* **Remediation (+0.50):** Awarded when the agent applies the correct hardened value.
+* **Max Score:** **1.00** per task.
 
 ---
 
-## 🏁 Quick Start
+## 🛠️ Developer Quick-Start
 
-### 1. Local Setup
+### Local Emulation
+To run this on your local machine (tested on **Asus TUF F17** / Windows 11):
+
 ```bash
+# Clone and Setup
 git clone [https://huggingface.co/spaces/Wiki05/nexus-config-env](https://huggingface.co/spaces/Wiki05/nexus-config-env)
 cd nexus-config-env
+python -m venv .venv
+.venv\Scripts\activate
+
+# Install & Launch
 pip install -r requirements.txt
-python -m uvicorn app:app --host 127.0.0.1 --port 7860
+python -m uvicorn app:app --host 0.0.0.0 --port 7860
 
+## Running the AI Agent
 
-Run Baseline Agent
-
-$env:ENV_URL="[http://127.0.0.1:7860](http://127.0.0.1:7860)"
 $env:HF_TOKEN="your_token"
+$env:ENV_URL="[https://wiki05-nexus-config-env.hf.space](https://wiki05-nexus-config-env.hf.space)"
 python inference.py
 
+## Author
+Vignesh E
 
-Project Structure
+GitHub: @Wiki05
 
-nexus-config-env/
-├── server/
-│   ├── nexus_environment.py  # Core RL Logic
-│   └── app.py                # FastAPI Routes
-├── Dockerfile                # Deployment Config
-├── inference.py              # Grader Client (OpenAI-based)
-├── openenv.yaml              # OpenEnv Metadata
-└── README.md                 # Documentation
-
-
-Author: Vignesh E
-
-Built for: Meta x Scaler OpenEnv Hackathon 2026
+LinkedIn: vignesh-e-dev
