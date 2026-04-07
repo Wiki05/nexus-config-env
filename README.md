@@ -263,4 +263,5 @@ nexus-config-env/
 **Vignesh E**
 - GitHub: https://github.com/Wiki05
 - Email: vigneshdev1022@gmail.com
+- LinkedIn: https://www.linkedin.com/in/vignesh-e-dev/
 - Built for Meta x Scaler OpenEnv Hackathon 2026
