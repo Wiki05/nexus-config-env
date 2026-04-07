@@ -4,8 +4,10 @@ emoji: 🛡️
 colorFrom: blue
 colorTo: indigo
 sdk: docker
-pinned: false
 app_port: 7860
+pinned: false
+license: mit
+base_path: /web
 ---
 
 # 🛡️ Nexus-Config-Env
@@ -70,26 +72,25 @@ We use a **Deterministic Partial Reward** system to provide granular feedback to
 To run this on your local machine (tested on **Asus TUF F17** / Windows 11):
 
 ```bash
-Clone and Setup
+# Clone and Setup
 git clone [https://huggingface.co/spaces/Wiki05/nexus-config-env](https://huggingface.co/spaces/Wiki05/nexus-config-env)
 cd nexus-config-env
 python -m venv .venv
 .venv\Scripts\activate
 
-Install & Launch
+# Install & Launch
 pip install -r requirements.txt
 python -m uvicorn app:app --host 0.0.0.0 --port 7860
 
-Running the AI Agent
+## Running the AI Agent
 
 $env:HF_TOKEN="your_token"
 $env:ENV_URL="[https://wiki05-nexus-config-env.hf.space](https://wiki05-nexus-config-env.hf.space)"
 python inference.py
 
-Author
+## Author
+Vignesh E
 
-  Vignesh E
-- GitHub: https://github.com/Wiki05
-- Email: vigneshdev1022@gmail.com
-- LinkedIn: https://www.linkedin.com/in/vignesh-e-dev/
-- Built for Meta x Scaler OpenEnv Hackathon 2026
+GitHub: @Wiki05
+
+LinkedIn: vignesh-e-dev

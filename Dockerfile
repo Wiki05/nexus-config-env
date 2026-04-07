@@ -30,4 +30,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 # Launch the server using the module approach
 # Replace your current CMD with this:
+ENV ENABLE_WEB_INTERFACE=true
 CMD ["python", "-m", "uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "7860"]
