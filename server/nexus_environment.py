@@ -12,6 +12,11 @@ class NexusEnvironment:
         self.current_score = 0.0
         self.done = False
 
+        self.min_final_score = 0.01
+        self.max_final_score = 0.99
+        self.step1_reward = 0.49
+        self.step2_reward = 0.50
+
     async def reset(self, task_id: str = "task_1_easy") -> NexusObservation:
         self.current_task_id = task_id
         self.current_scenario = deepcopy(SCENARIOS[task_id][0])
@@ -19,6 +24,9 @@ class NexusEnvironment:
         self.current_score = 0.0
         self.done = False
         return self._get_obs()
+
+    def _clamp_final_score(self, score: float) -> float:
+        return min(self.max_final_score, max(self.min_final_score, score))
 
     async def step(self, action: NexusAction) -> tuple[NexusObservation, float, bool, dict]:
         if self.current_scenario is None:
@@ -44,25 +52,32 @@ class NexusEnvironment:
 
         if self.step_count == 1:
             if field_match:
-                reward = 0.50
+                reward = self.step1_reward
                 info["message"] = "Correct field identified."
             else:
+                reward = 0.0
                 info["message"] = "Incorrect field."
 
             self.done = False
 
         elif self.step_count == 2:
             if field_match and value_match:
-                reward = 0.50
+                reward = self.step2_reward
                 info["message"] = "Correct value applied."
                 self._apply_fix(action)
             else:
+                reward = 0.0
                 info["message"] = "Final fix incorrect."
 
             self.done = True
 
         self.current_score += reward
-        self.current_score = min(self.current_score, 1.0)
+
+        # IMPORTANT: final task score must be strictly inside (0, 1)
+        if self.done:
+            self.current_score = self._clamp_final_score(self.current_score)
+        else:
+            self.current_score = min(self.current_score, self.max_final_score)
 
         return self._get_obs(done=self.done), reward, self.done, info
 
