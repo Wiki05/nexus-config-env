@@ -225,15 +225,16 @@ def _safe_json(data) -> str:
     try:    return json.dumps(data, indent=2, default=str)
     except: return "{}"
 
-def _fmt_status(obs) -> str:
-    step  = min(int(getattr(obs, "step", 0)), MAX_STEPS)
+def _fmt_status(obs, env_inst=None) -> str:
+    task_max   = int(getattr(env_inst, "max_steps", MAX_STEPS)) if env_inst else MAX_STEPS
+    step  = min(int(getattr(obs, "step", 0)), task_max)
     score = float(getattr(obs, "current_score", 0.0))
-    done  = bool(getattr(obs, "done", False)) or step >= MAX_STEPS
+    done  = bool(getattr(obs, "done", False)) or step >= task_max
     icon  = "✅ COMPLETE" if done else "🔄 IN-PROGRESS"
     bar   = "█" * int(score * 20) + "░" * (20 - int(score * 20))
     return (
         f"**Score:** {score:.3f} / 1.000 `{bar}`\n\n"
-        f"**Step:** {step}/{MAX_STEPS} | **Status:** {icon}"
+        f"**Step:** {step}/{task_max} | **Status:** {icon}"
     )
 
 def _build_payload(obs, env_inst) -> dict:
