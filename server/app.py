@@ -133,7 +133,8 @@ async def api_step(request: Request):
             status_code=400,
         )
     cur = _api_env._get_obs()
-    if cur.done or cur.step >= MAX_STEPS:
+    task_max = int(getattr(_api_env, "max_steps", MAX_STEPS))
+    if cur.done or cur.step >= task_max:
         return JSONResponse({
             "observation": cur.model_dump(),
             "reward": 0.0,
@@ -238,14 +239,16 @@ def _fmt_status(obs, env_inst=None) -> str:
     )
 
 def _build_payload(obs, env_inst) -> dict:
-    step  = min(int(getattr(obs, "step", 0)), MAX_STEPS)
-    done  = bool(getattr(obs, "done", False)) or step >= MAX_STEPS
+    task_max = int(getattr(env_inst, "max_steps", MAX_STEPS))
+    step  = min(int(getattr(obs, "step", 0)), task_max)
+    done  = bool(getattr(obs, "done", False)) or step >= task_max
     return {
         "has_active_task":  env_inst.current_scenario is not None,
         "task_id":          getattr(env_inst, "current_task_id", None),
         "step":             step,
+        "max_steps":        task_max,
         "done":             done,
-        "current_score":    float(getattr(obs, "current_score", 0.0)),
+        "current_score":    round(float(getattr(obs, "current_score", 0.0)), 2),
         "actions_taken":    getattr(obs, "actions_taken", []),
         "identified_issues": getattr(obs, "identified_issues", []),
         "proposed_field":   getattr(obs, "proposed_field", None),
@@ -262,25 +265,69 @@ async def ui_reset(task_id):
         return f"❌ {e}", "", str(e), _safe_json({"error": str(e)})
 
 async def ui_step(action_type, fix_type_val, target_field, new_value, reasoning):
+    # ── Guard 1: no active episode ─────────────────────────────────────────
     if _ui_env.current_scenario is None:
-        empty = "### ⚠️ No active episode\nClick **Reset** to load a task."
-        return empty, "", "Click Reset first.", _safe_json({"warning": "Call Reset first."})
+        return (
+            "### ⚠️ No active episode\nClick **Reset** first to load a task before stepping.",
+            "",
+            "No active episode — click Reset first.",
+            _safe_json({"warning": "Call Reset first."}),
+        )
 
-    cur       = _ui_env._get_obs()
+    cur      = _ui_env._get_obs()
     max_steps = int(getattr(_ui_env, "max_steps", MAX_STEPS))
+
+    # ── Guard 2: episode already finished ──────────────────────────────────
     if cur.done or cur.step >= max_steps:
         p = _build_payload(cur, _ui_env)
         return (
-            "### ✅ Episode complete — click **Reset** to start again.",
+            _fmt_status(cur, _ui_env) + "\n\n> ✅ Episode complete — click **Reset** to start again.",
             getattr(cur, "dirty_yaml", ""),
-            "Episode already ended.",
+            "Episode already ended. Click Reset to start again.",
             _safe_json(p),
         )
 
+    # ── Guard 3: Reasoning required for every step ─────────────────────────
+    if not reasoning or not reasoning.strip():
+        return (
+            _fmt_status(cur, _ui_env) + "\n\n> ⚠️ Please enter your **Reasoning** before submitting a step.",
+            getattr(cur, "dirty_yaml", ""),
+            "Reasoning field is required — explain why you are taking this action.",
+            _safe_json({"warning": "Fill in the Reasoning field."}),
+        )
+
+    # ── Guard 4: identify_issue requires a fix_type category ───────────────
+    if action_type == "identify_issue" and (not fix_type_val or fix_type_val == "none"):
+        return (
+            _fmt_status(cur, _ui_env) + "\n\n> ⚠️ **identify_issue** requires a **Fix Type** (cost / security / stability).",
+            getattr(cur, "dirty_yaml", ""),
+            "identify_issue needs Fix Type set — choose cost, security, or stability.",
+            _safe_json({"warning": "Select a Fix Type for identify_issue."}),
+        )
+
+    # ── Guard 5: propose_fix requires target_field ─────────────────────────
+    if action_type == "propose_fix" and not target_field.strip():
+        return (
+            _fmt_status(cur, _ui_env) + "\n\n> ⚠️ **propose_fix** requires a **Target Field** (e.g. resources.requests.memory).",
+            getattr(cur, "dirty_yaml", ""),
+            "propose_fix needs Target Field — enter the YAML path you want to change.",
+            _safe_json({"warning": "Fill in Target Field for propose_fix."}),
+        )
+
+    # ── Guard 6: apply_fix requires both target_field AND new_value ─────────
+    if action_type == "apply_fix" and (not target_field.strip() or not new_value.strip()):
+        return (
+            _fmt_status(cur, _ui_env) + "\n\n> ⚠️ **apply_fix** requires both **Target Field** and **New Value**.",
+            getattr(cur, "dirty_yaml", ""),
+            "apply_fix needs Target Field and New Value — both must be filled.",
+            _safe_json({"warning": "Fill in Target Field and New Value for apply_fix."}),
+        )
+
+    # ── All validation passed — execute step ───────────────────────────────
     try:
-        action_kwargs = {
+        action_kwargs: dict = {
             "action_type": action_type,
-            "reasoning":   reasoning or "",
+            "reasoning":   reasoning.strip(),
         }
         if fix_type_val and fix_type_val != "none":
             action_kwargs["fix_type"] = fix_type_val
@@ -292,7 +339,7 @@ async def ui_step(action_type, fix_type_val, target_field, new_value, reasoning)
         action = NexusAction(**action_kwargs)
         obs, reward, done, info = await _ui_env.step(action)
         p = _build_payload(obs, _ui_env)
-        p["last_reward"] = round(float(reward), 3)
+        p["last_reward"] = round(float(reward), 2)
         p["info"]        = info
         env_msg = info.get("message", "")
         return _fmt_status(obs, _ui_env), getattr(obs, "dirty_yaml", ""), env_msg, _safe_json(p)

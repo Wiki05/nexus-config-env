@@ -192,9 +192,9 @@ class NexusEnvironment:
                 + f" Step budget ({self.max_steps}) exhausted."
             )
 
-        # ── Score accumulation ─────────────────────────────────────────────
+        # ── Score accumulation (cumulative, clamped to [0.0, 0.99]) ───────────
         reward = round(max(-0.5, min(0.99, reward)), 3)
-        self.current_score = round(max(self.current_score, reward), 3)
+        self.current_score = round(min(0.99, max(0.0, self.current_score + reward)), 3)
 
         # ── Run full episode grader if done ────────────────────────────────
         if self.done and self.current_task_id in GRADERS:
