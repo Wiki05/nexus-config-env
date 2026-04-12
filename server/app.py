@@ -233,7 +233,7 @@ def _fmt_status(obs, env_inst=None) -> str:
     icon  = "✅ COMPLETE" if done else "🔄 IN-PROGRESS"
     bar   = "█" * int(score * 20) + "░" * (20 - int(score * 20))
     return (
-        f"**Score:** {score:.3f} / 1.000 `{bar}`\n\n"
+        f"**Score:** {score:.2f} / 1.00 `{bar}`\n\n"
         f"**Step:** {step}/{task_max} | **Status:** {icon}"
     )
 
