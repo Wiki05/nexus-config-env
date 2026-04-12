@@ -1,123 +1,198 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+"""
+Core environment implementation for Nexus-Config-Env.
+Simulates real-world Kubernetes YAML misconfiguration remediation
+as an RL environment following OpenEnv spec.
+"""
+
+import yaml
 from copy import deepcopy
-from models import NexusAction, NexusObservation
-from scenarios import SCENARIOS
+from typing import Optional
+
+try:
+    from models import NexusAction, NexusObservation
+    from scenarios import SCENARIOS, GRADERS
+except ImportError:
+    from ..models import NexusAction, NexusObservation
+    from ..scenarios import SCENARIOS, GRADERS
 
 
 class NexusEnvironment:
-    def __init__(self):
-        self.current_scenario = None
-        self.current_task_id = None
-        self.step_count = 0
-        self.max_steps = 2
-        self.current_score = 0.0
-        self.done = False
+    """
+    Kubernetes Configuration Hardening Environment.
 
-        self.min_final_score = 0.01
-        self.max_final_score = 0.99
-        self.step1_reward = 0.49
-        self.step2_reward = 0.50
+    An agent interacts with this environment by:
+      1. Calling reset(task_id) to load a scenario
+      2. Calling step(action) to apply a remediation
+      3. Observing reward and updated observation
+
+    The grader uses deterministic scoring:
+      - Category match: +0.20
+      - Field identification: +0.40 (exact) or +0.20 (partial)
+      - Value correction: +0.40 (only if field is also exact)
+    """
+
+    def __init__(self):
+        self.current_scenario: Optional[dict] = None
+        self.current_task_id: Optional[str] = None
+        self.step_count: int = 0
+        self.max_steps: int = 3
+        self.current_score: float = 0.0
+        self.done: bool = False
+        self.episode_log: list = []
 
     async def reset(self, task_id: str = "task_1_easy") -> NexusObservation:
+        """Reset environment to start a new episode for the given task."""
+        if task_id not in SCENARIOS:
+            raise ValueError(
+                f"Unknown task_id '{task_id}'. "
+                f"Valid: {list(SCENARIOS.keys())}"
+            )
         self.current_task_id = task_id
         self.current_scenario = deepcopy(SCENARIOS[task_id][0])
         self.step_count = 0
         self.current_score = 0.0
         self.done = False
+        self.episode_log = []
         return self._get_obs()
 
-    def _clamp_final_score(self, score: float) -> float:
-        return min(self.max_final_score, max(self.min_final_score, score))
+    async def step(
+        self, action: NexusAction
+    ) -> tuple[NexusObservation, float, bool, dict]:
+        """
+        Apply an agent action and return (observation, reward, done, info).
 
-    async def step(self, action: NexusAction) -> tuple[NexusObservation, float, bool, dict]:
+        The grader is DETERMINISTIC:
+          - Partial credit for category and field matching
+          - Full credit only when both field and value are exactly right
+        """
         if self.current_scenario is None:
-            return self._get_obs(), 0.0, False, {"error": "No active scenario. Call reset first."}
-
-        if self.done or self.step_count >= self.max_steps:
-            return self._get_obs(done=True), 0.0, True, {
-                "warning": "Task already completed. Reset to start again."
-            }
+            return self._get_obs(), 0.0, False, {"error": "No active scenario. Call /reset first."}
 
         self.step_count += 1
         reward = 0.0
-        info = {}
+        info: dict = {}
 
-        target_f = self.current_scenario["target"].lower().replace("/", ".").strip()
-        target_v = str(self.current_scenario["limit"]).lower().strip()
+        # ── Normalize targets from scenario ───────────────────────────────
+        scenario = self.current_scenario
+        target_f = scenario["target"].lower().replace("/", ".").strip()
+        target_v = str(scenario["limit"]).lower().strip()
+        target_type = scenario.get("type", "security").lower()
 
+        # ── Normalize agent action ────────────────────────────────────────
         provided_f = action.target_field.lower().replace("/", ".").strip()
         provided_v = str(action.new_value).lower().strip()
+        provided_type = action.fix_type.lower()
 
-        field_match = (target_f in provided_f) or (provided_f in target_f)
-        value_match = (provided_v == target_v)
-
-        if self.step_count == 1:
-            if field_match:
-                reward = self.step1_reward
-                info["message"] = "Correct field identified."
-            else:
-                reward = 0.0
-                info["message"] = "Incorrect field."
-
-            self.done = False
-
-        elif self.step_count == 2:
-            if field_match and value_match:
-                reward = self.step2_reward
-                info["message"] = "Correct value applied."
-                self._apply_fix(action)
-            else:
-                reward = 0.0
-                info["message"] = "Final fix incorrect."
-
-            self.done = True
-
-        self.current_score += reward
-
-        # IMPORTANT: final task score must be strictly inside (0, 1)
-        if self.done:
-            self.current_score = self._clamp_final_score(self.current_score)
+        # ── Grader: Category reward (20%) ─────────────────────────────────
+        if provided_type == target_type:
+            reward += 0.20
+            info["category_match"] = True
         else:
-            self.current_score = min(self.current_score, self.max_final_score)
+            info["category_match"] = False
+
+        # ── Grader: Field identification (up to 40%) ──────────────────────
+        if provided_f == target_f:
+            reward += 0.40
+            info["field_match"] = "exact"
+        elif target_f in provided_f or provided_f in target_f:
+            reward += 0.20
+            info["field_match"] = "partial"
+        else:
+            info["field_match"] = "none"
+
+        # ── Grader: Value correction (40%) — only on exact field match ─────
+        if provided_f == target_f and provided_v == target_v:
+            reward += 0.40
+            info["value_match"] = True
+            self._apply_fix(action)
+            self.done = True
+        else:
+            info["value_match"] = False
+
+        # ── Step budget enforcement ───────────────────────────────────────
+        if self.step_count >= self.max_steps:
+            self.done = True
+            info["message"] = "Step budget exhausted."
+
+        # ── Clamp and accumulate score ───────────────────────────────────
+        reward = round(max(0.01, min(0.99, reward)), 2)
+        self.current_score = round(max(self.current_score, reward), 2)
+
+        # ── Episode log for external grader compatibility ─────────────────
+        self.episode_log.append({
+            "step": self.step_count,
+            "action": provided_type,
+            "target_field": provided_f,
+            "new_value": provided_v,
+            "reward": reward,
+        })
+
+        # ── Run post-hoc grader if done ───────────────────────────────────
+        if self.done and self.current_task_id in GRADERS:
+            graded_score = GRADERS[self.current_task_id](self.episode_log)
+            self.current_score = graded_score
+            info["graded_score"] = graded_score
 
         return self._get_obs(done=self.done), reward, self.done, info
 
-    def _apply_fix(self, action: NexusAction):
-        target = self.current_scenario["target"]
-        new_value = str(action.new_value)
+    # ── Private helpers ───────────────────────────────────────────────────
 
-        if target == "memory":
+    def _apply_fix(self, action: NexusAction) -> None:
+        """Patch the dirty_yaml in the scenario with the correct value."""
+        if self.current_scenario is None:
+            return
+        try:
+            config = yaml.safe_load(self.current_scenario["dirty_yaml"]) or {}
+            keys = action.target_field.split(".")
+            node = config
+            for key in keys[:-1]:
+                if key not in node:
+                    node[key] = {}
+                node = node[key]
+            # Try int/bool coercion for cleaner YAML
+            raw_val: str = action.new_value
+            val: object
+            if raw_val.lower() == "true":
+                val = True
+            elif raw_val.lower() == "false":
+                val = False
+            else:
+                try:
+                    val = int(raw_val)
+                except ValueError:
+                    val = raw_val
+            node[keys[-1]] = val
+            self.current_scenario["dirty_yaml"] = yaml.dump(config, default_flow_style=False)
+        except Exception:
+            # Fallback: simple string replacement so scenario is never broken
             self.current_scenario["dirty_yaml"] = (
-                "resources:\n"
-                "  requests:\n"
-                f"    memory: '{new_value}'"
+                f"# Fixed by agent\n{action.target_field}: {action.new_value}\n"
             )
-            self.current_scenario["telemetry"]["recommended_mem_mb"] = 256
 
-        elif target == "runAsUser":
-            self.current_scenario["dirty_yaml"] = (
-                "securityContext:\n"
-                f"  runAsUser: {new_value}"
+    def _get_obs(self, done: Optional[bool] = None) -> NexusObservation:
+        """Build a NexusObservation from current environment state."""
+        if self.current_scenario is None:
+            return NexusObservation(
+                config_id="none",
+                dirty_yaml="",
+                telemetry={},
+                fixes_applied=[],
+                current_score=0.0,
+                step=0,
+                done=False,
             )
-            self.current_scenario["telemetry"]["is_root"] = False
-            self.current_scenario["telemetry"]["user_id"] = int(new_value) if str(new_value).isdigit() else new_value
-
-        elif target == "privileged":
-            self.current_scenario["dirty_yaml"] = (
-                "securityContext:\n"
-                f"  privileged: {new_value}"
-            )
-            self.current_scenario["telemetry"]["privileged_status"] = False
-
-    def _get_obs(self, done: bool = False) -> NexusObservation:
+        effective_done = done if done is not None else self.done
         return NexusObservation(
-            config_id=self.current_scenario["id"] if self.current_scenario else "none",
-            dirty_yaml=self.current_scenario["dirty_yaml"] if self.current_scenario else "",
-            telemetry=self.current_scenario["telemetry"] if self.current_scenario else {},
-            fixes_applied=[],
+            config_id=self.current_scenario.get("id", "unknown"),
+            dirty_yaml=self.current_scenario.get("dirty_yaml", ""),
+            telemetry=self.current_scenario.get("telemetry", {}),
+            fixes_applied=self.current_scenario.get("fixes_applied", []),
             current_score=self.current_score,
-            step=min(self.step_count, self.max_steps),
-            done=done
+            step=self.step_count,
+            done=effective_done,
         )
-
-    async def close(self):
-        pass

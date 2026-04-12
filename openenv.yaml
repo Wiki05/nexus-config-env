@@ -1,21 +1,40 @@
-name: "Nexus-Config-Env"
-version: "0.1.0"
-description: "An AI training environment for optimizing cloud resource configurations and security."
+spec_version: 1
+name: "nexus-config-env"
+display_name: "Nexus Config Env — Kubernetes Hardening"
+version: "0.3.0"
+description: >
+  A high-fidelity Reinforcement Learning environment for autonomous Kubernetes
+  YAML misconfiguration remediation. Trains AI agents to act as Site Reliability
+  Engineers: detecting cloud security vulnerabilities, rightsizing over-provisioned
+  resources, and enforcing policy compliance — all through structured API interaction.
 author: "Vignesh E"
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
+
 tasks:
   - id: "task_1_easy"
-    name: "The Ghost Hunter"
+    name: "Ghost Hunter — Resource Cost Optimization"
     difficulty: "easy"
-  - id: "task_2_medium"
-    name: "The Security Patch"
-    difficulty: "medium"
-  - id: "task_3_hard"
-    name: "The Privilege Patch"
-    difficulty: "hard"
+    max_steps: 3
+    description: >
+      Identify and fix over-provisioned memory or CPU requests to reduce
+      cloud costs. Telemetry shows actual usage far below requested amounts.
 
-runtime:
-  type: "http"
-  port: 7860
-  health_path: "/health"
-  reset_path: "/reset"
-  step_path: "/step"
+  - id: "task_2_medium"
+    name: "Security Patch — Root Access Elimination"
+    difficulty: "medium"
+    max_steps: 3
+    description: >
+      Detect containers running as root (UID 0) or with unsafe filesystem
+      access. Apply the principle of least privilege.
+
+  - id: "task_3_hard"
+    name: "Privilege Patch — Kernel Isolation Enforcement"
+    difficulty: "hard"
+    max_steps: 3
+    description: >
+      Identify and close container-escape vulnerabilities caused by
+      privileged mode or host namespace sharing. Complex multi-vector
+      attack surface requires nuanced remediation.
