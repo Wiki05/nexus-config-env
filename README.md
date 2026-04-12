@@ -13,13 +13,13 @@ license: mit
 ### **Autonomous Kubernetes Hardening via Reinforcement Learning**
 
 [![OpenEnv Compliant](https://img.shields.io/badge/OpenEnv-v1.0--compliant-brightgreen)](https://github.com/meta-pytorch/OpenEnv)
-[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/Wiki05/nexus-config-env)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Spaces-blue)](https://huggingface.co/spaces/Wiki05/nexus-config-env)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Nexus-Config-Env** is a high-fidelity Reinforcement Learning environment for **autonomous Kubernetes YAML misconfiguration remediation**. Built on the OpenEnv specification, it challenges AI agents to inspect broken cloud infrastructure configurations, interpret real-time telemetry, and apply surgical fixes — all through a structured, standardized API.
+**Nexus-Config-Env** is a high-fidelity Reinforcement Learning environment that trains AI agents to act as **Site Reliability Engineers (SREs)**. Given a broken Kubernetes YAML configuration and real-time telemetry, the agent must follow a structured 8-step SRE workflow to identify and remediate misconfigurations — earning rewards at each stage of the diagnostic process.
 
-The environment simulates the daily work of a **Site Reliability Engineer (SRE)**: detecting ghost RAM allocations, eliminating root containers, closing container-escape vulnerabilities, and enforcing organizational security policies.
+The environment features a **discrete 8-action space** and a **4-dimensional multi-criteria grader** that provides rich learning signal at every step, enabling effective RL training via partial credit rather than binary pass/fail.
 
 ---
 
@@ -27,141 +27,169 @@ The environment simulates the daily work of a **Site Reliability Engineer (SRE)*
 
 | Resource | URL |
 |:---------|:----|
-| **Space** | [Wiki05/nexus-config-env](https://huggingface.co/spaces/Wiki05/nexus-config-env) |
-| **Playground** | `https://wiki05-nexus-config-env.hf.space/web` |
-| **API Docs** | `https://wiki05-nexus-config-env.hf.space/docs` |
-| **Health** | `https://wiki05-nexus-config-env.hf.space/health` |
+| **Playground** | [wiki05-nexus-config-env.hf.space/web](https://wiki05-nexus-config-env.hf.space/web) |
+| **API Docs** | [wiki05-nexus-config-env.hf.space/docs](https://wiki05-nexus-config-env.hf.space/docs) |
+| **Health** | [wiki05-nexus-config-env.hf.space/health](https://wiki05-nexus-config-env.hf.space/health) |
+| **Tasks** | [wiki05-nexus-config-env.hf.space/tasks](https://wiki05-nexus-config-env.hf.space/tasks) |
 
 ---
 
-## 💡 Real-World Problem: The $30B Cloud Misconfiguration Crisis
+## 💡 Real-World Problem: The $30B Kubernetes Misconfiguration Crisis
 
-Misconfigured Kubernetes clusters are responsible for billions in unnecessary cloud spend and are the root cause of the most severe security breaches. This environment targets three critical attack vectors directly from production SRE playbooks:
+Misconfigured Kubernetes clusters are responsible for:
+- **$30B+ yearly** in unnecessary cloud compute spend (ghost RAM / CPU hoarding)
+- **Major security breaches** (Uber, Capital One) caused by over-privileged containers
+- **Regulatory violations** (PCI-DSS, SOC2) from containers running as root
 
-| # | Problem | Real Impact |
-|---|---------|-------------|
-| 1 | **Ghost RAM** — Apps request 32× more memory than needed | $47–$300/month per pod in wasted compute |
-| 2 | **Root Containers** — Processes run as UID 0 | Full node compromise if container is breached |
-| 3 | **Privileged Mode** — Containers with host kernel access | Container escape → full cluster takeover |
+This environment targets **three production-level attack vectors** directly from real SRE incident playbooks:
+
+| # | Problem | Real Impact | CVE Examples |
+|---|---------|-------------|--------------|
+| 1 | **Ghost RAM** — 8 Gi requested, 100 MB used | $47–$1,327/month per workload | — |
+| 2 | **Root Containers** — UID 0 with privilege escalation | Host compromise on container breach | CVE-2021-4034 |
+| 3 | **Privileged Mode** — host kernel + PID namespace | Full cluster takeover | CVE-2022-0847 (Dirty Pipe) |
 
 ---
 
-## 🏗️ Environment Architecture
+## ⚡ Action Space (Discrete, 8 Actions)
 
+Unlike simple "guess the field" environments, Nexus-Config-Env features a **structured SRE workflow** with discrete actions that mirror how real engineers remediate incidents:
+
+| Action | Reward | Terminal | Description |
+|:-------|:------:|:--------:|:------------|
+| `scan_config` | +0.10 | No | Analyse YAML structure for misconfigurations |
+| `read_telemetry` | +0.10 | No | Read runtime metrics (CPU, RAM, CVE scores) |
+| `identify_issue` | +0.20 | No | Classify root cause (cost / security / stability) |
+| `propose_fix` | +0.15 | No | Plan a field change without executing |
+| `apply_fix` | **+0.50 / −0.30** | No | Execute remediation (positive if correct, negative if wrong) |
+| `verify_fix` | +0.20 | **Yes** | Confirm fix applied — ends episode |
+| `escalate` | +0.05 | **Yes** | Hand off to human SRE — ends episode |
+| `revert_change` | −0.10 | No | Undo last change |
+
+### Optimal SRE Protocol (maximises score)
 ```
-┌─────────────────────────────────────────────────────┐
-│  AI Agent (GPT-4 / Llama / Nemotron / Any LLM)     │
-│                                                     │
-│  POST /reset  ←──── start episode                  │
-│  POST /step   ←──── apply action                   │
-│  GET  /state  ←──── inspect progress               │
-└──────────────────┬──────────────────────────────────┘
-                   │  OpenEnv HTTP API
-┌──────────────────▼──────────────────────────────────┐
-│  Nexus-Config-Env (FastAPI + Gradio)                │
-│                                                     │
-│  Observation:  dirty YAML + telemetry signals       │
-│  Action:       fix_type + target_field + new_value  │
-│  Reward:       deterministic partial-credit grader  │
-└─────────────────────────────────────────────────────┘
-```
-
-### Observation Space (`NexusObservation`)
-
-| Field | Type | Description |
-|:------|:-----|:------------|
-| `config_id` | `str` | Unique scenario ID for reproducibility |
-| `dirty_yaml` | `str` | The misconfigured Kubernetes manifest |
-| `telemetry` | `dict` | Memory, CPU, CVE scores, security flags |
-| `fixes_applied` | `list[str]` | Fields corrected so far |
-| `current_score` | `float` | Cumulative episode score (0–1) |
-| `step` | `int` | Current step in the episode |
-| `done` | `bool` | True when episode is complete |
-
-### Action Space (`NexusAction`)
-
-```json
-{
-  "fix_type":     "cost | security | stability",
-  "target_field": "dot-notation YAML path",
-  "new_value":    "hardened value",
-  "reasoning":    "brief explanation"
-}
+scan_config → read_telemetry → identify_issue → propose_fix → apply_fix → verify_fix
 ```
 
 ---
 
-## 📊 Grader Logic & Reward Shaping
+## 📊 Grader: Multi-Criteria Deterministic Scoring
 
-A **Deterministic Partial Credit** grader provides meaningful learning signal at every step:
+The grader evaluates each episode across **4 independent dimensions** for a maximum score of 1.00:
 
-| Component | Points | Condition |
-|:----------|:-------|:----------|
-| **Category Match** | +0.20 | Correct `fix_type` (cost/security/stability) |
-| **Field Identification (exact)** | +0.40 | Exact `target_field` match |
-| **Field Identification (partial)** | +0.20 | Field is in the right neighborhood |
-| **Value Correction** | +0.40 | Correct `new_value` AND exact field match |
-| **Max Score** | **1.00** | All three components correct |
+| Dimension | Weight | Criteria |
+|:----------|:------:|:---------|
+| **Protocol Adherence** | 20% | Used scan_config / read_telemetry before apply_fix? Identified issue before fixing? |
+| **Diagnosis Accuracy** | 25% | Correct issue category (cost/security)? Identified the exact YAML field? |
+| **Remediation Quality** | 40% | Exact target_field AND new_value applied? Partial credit for close attempts. |
+| **Efficiency Bonus** | 15% | Resolved within 50% of step budget → full bonus; graduated reduction after. |
 
-This gradient enables efficient RL training — the agent receives partial credit for being "close", rather than a binary pass/fail signal.
-
-Each task also has a **dedicated grader function** that validates the full episode trajectory for robust evaluation.
+**Key properties:**
+- ✅ **Deterministic**: Same episode trajectory → same grader score
+- ✅ **Varied**: Score changes meaningfully based on agent behaviour
+- ✅ **Partial credit**: No binary pass/fail — every good action is rewarded
+- ✅ **Per-task graders**: Separate grader function per task ID
 
 ---
 
 ## 🎯 Tasks
 
-### `task_1_easy` — Ghost Hunter (Cost Optimization)
+### `task_1_easy` — Ghost Hunter (Cost Optimisation, 6 steps)
 
-**Scenario:** An API service requests 8 GB of RAM but uses only ~100 MB on average.
+**Misconfig:** API service requests 8 Gi RAM, uses ~100 MB.
 
 ```yaml
-# BROKEN CONFIG
+# Broken
 resources:
   requests:
     memory: '8Gi'
-  limits:
-    memory: '16Gi'
 ```
 
-**Telemetry:** `avg_mem_mb: 100, peak_mem_mb: 200, waste_estimate_usd_month: 47.20`
+**Telemetry signals:** `avg_mem_mb: 98`, `waste_estimate_usd_month: 47.20`
 
-**Optimal Fix:** Set `resources.requests.memory` → `256Mi`
+**Correct fix:** `apply_fix(fix_type=cost, target_field=resources.requests.memory, new_value=256Mi)`
+
+**Baseline score:** 0.843
 
 ---
 
-### `task_2_medium` — Security Patch (Root Access)
+### `task_2_medium` — Security Patch (Root Access, 8 steps)
 
-**Scenario:** The backend API container is running as root (UID 0) with privilege escalation enabled.
+**Misconfig:** Backend API running as root (UID 0) with privilege escalation enabled.
 
 ```yaml
-# BROKEN CONFIG
+# Broken
 securityContext:
   runAsUser: 0
   allowPrivilegeEscalation: true
 ```
 
-**Telemetry:** `is_root: true, cve_risk_score: 9.1`
+**Telemetry signals:** `is_root: true`, `cve_risk_score: 9.1`, `opa_policy_violations: [no-root-containers]`
 
-**Optimal Fix:** Set `securityContext.runAsUser` → `1000`
+**Correct fix:** `apply_fix(fix_type=security, target_field=securityContext.runAsUser, new_value=1000)`
+
+**Baseline score:** 0.748
 
 ---
 
-### `task_3_hard` — Privilege Patch (Container Escape Prevention)
+### `task_3_hard` — Privilege Patch (Container Escape, 10 steps)
 
-**Scenario:** An infra-agent in `kube-system` with `privileged: true` and `hostPID: true` — a critical container-escape risk.
+**Misconfig:** CRITICAL — infra-agent in kube-system with `privileged: true`, `hostPID: true`, host root mounted.
 
 ```yaml
-# BROKEN CONFIG
+# Broken — CRITICAL escape risk
 securityContext:
   privileged: true
   runAsUser: 0
 hostPID: true
+hostNetwork: true
 ```
 
-**Telemetry:** `privileged_status: true, escape_risk: CRITICAL, cve_ids: [CVE-2022-0847, CVE-2019-5736]`
+**Telemetry signals:** `escape_risk_level: CRITICAL`, `exploitable_cves: [CVE-2022-0847, CVE-2019-5736]`
 
-**Optimal Fix:** Set `securityContext.privileged` → `false`
+**Correct fix:** `apply_fix(fix_type=security, target_field=securityContext.privileged, new_value=false)`
+
+**Baseline score:** 0.623
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  AI Agent (any LLM via OpenAI-compatible client)        │
+│                                                         │
+│  1. POST /reset?task_id=X  → NexusObservation           │
+│  2. POST /step (NexusAction JSON) → reward + obs        │
+│  3. Repeat until done=true                              │
+│  4. GET /state → read-only episode snapshot             │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────┐
+│  Nexus-Config-Env (FastAPI + Gradio on HF Spaces)       │
+│                                                         │
+│  NexusAction     (action_type + optional fields)        │
+│  NexusObservation (dirty_yaml + telemetry + score)      │
+│  NexusEnvironment (8-action dispatcher + YAML patcher)  │
+│  Multi-Criteria Grader (4-dimensional episode scorer)   │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Observation Space
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `config_id` | str | Unique scenario ID |
+| `dirty_yaml` | str | Current K8s manifest |
+| `telemetry` | dict | CPU, RAM, CVE scores, cost estimates |
+| `message` | str | Feedback from last action |
+| `fixes_applied` | list | Fields patched so far |
+| `identified_issues` | list | Categories agent has identified |
+| `proposed_field` | str\|null | Last field targeted by propose_fix |
+| `current_score` | float | Cumulative graded score (0.001–0.999) |
+| `step` | int | Current step number |
+| `done` | bool | Episode complete flag |
+| `actions_taken` | list | Ordered action history |
 
 ---
 
@@ -169,27 +197,47 @@ hostPID: true
 
 ```bash
 # Health check
-GET https://wiki05-nexus-config-env.hf.space/health
-
-# List tasks
-GET https://wiki05-nexus-config-env.hf.space/tasks
+curl https://wiki05-nexus-config-env.hf.space/health
 
 # Start episode
-POST https://wiki05-nexus-config-env.hf.space/reset?task_id=task_1_easy
+curl -X POST "https://wiki05-nexus-config-env.hf.space/reset?task_id=task_1_easy"
 
-# Submit action
-POST https://wiki05-nexus-config-env.hf.space/step
-Content-Type: application/json
-{
-  "fix_type":     "cost",
-  "target_field": "resources.requests.memory",
-  "new_value":    "256Mi",
-  "reasoning":    "Rightsizing to match observed ~100MB usage"
-}
+# Submit action — scan first
+curl -X POST https://wiki05-nexus-config-env.hf.space/step \
+  -H "Content-Type: application/json" \
+  -d '{"action_type": "scan_config", "reasoning": "Analyse YAML structure"}'
 
-# Get current state (no side effects)
-GET https://wiki05-nexus-config-env.hf.space/state
+# Submit apply_fix
+curl -X POST https://wiki05-nexus-config-env.hf.space/step \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action_type":  "apply_fix",
+    "fix_type":     "cost",
+    "target_field": "resources.requests.memory",
+    "new_value":    "256Mi",
+    "reasoning":    "Rightsizing ghost RAM: 8Gi requested vs 100MB actual usage"
+  }'
+
+# Verify fix
+curl -X POST https://wiki05-nexus-config-env.hf.space/step \
+  -H "Content-Type: application/json" \
+  -d '{"action_type": "verify_fix", "reasoning": "Confirm remediation applied"}'
 ```
+
+---
+
+## 📈 Baseline Results
+
+Pre-computed with `Qwen/Qwen2.5-72B-Instruct` via HuggingFace Router:
+
+| Task | Difficulty | Avg Score |
+|:-----|:----------:|:---------:|
+| task_1_easy | Easy | 0.843 |
+| task_2_medium | Medium | 0.748 |
+| task_3_hard | Hard | 0.623 |
+| **Overall** | — | **0.738** |
+
+Full results saved to [`baseline_results.json`](./baseline_results.json).
 
 ---
 
@@ -199,23 +247,25 @@ GET https://wiki05-nexus-config-env.hf.space/state
 # Install dependencies
 pip install -r requirements.txt
 
-# Set env vars
-export HF_TOKEN="your_hf_token"
+# Set environment variables
+export HF_TOKEN="your_huggingface_token"
 export ENV_URL="https://wiki05-nexus-config-env.hf.space"
 export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"  # or any OpenAI-compatible model
 
-# Run inference
+# Run baseline inference script
 python inference.py
 ```
 
 Expected output:
 ```
-[INFO] Running Nexus-Config-Env baseline against https://wiki05-nexus-config-env.hf.space
 [START] task=task_1_easy env=Nexus-Config-Env model=Qwen/Qwen2.5-72B-Instruct
-[STEP] step=1 action=resources.requests.memory=256Mi reward=1.00 done=true error=null
-[END] success=true steps=1 score=1.000 rewards=1.00
-...
-[SUMMARY] Average score across 3 tasks: 0.883
+[STEP] step=1 action=scan_config reward=0.10 done=false error=null
+[STEP] step=2 action=read_telemetry reward=0.10 done=false error=null
+[STEP] step=3 action=identify_issue reward=0.20 done=false error=null
+[STEP] step=4 action=propose_fix reward=0.15 done=false error=null
+[STEP] step=5 action=apply_fix(resources.requests.memory=256Mi) reward=0.50 done=false error=null
+[STEP] step=6 action=verify_fix reward=0.20 done=true error=null
+[END] success=true steps=6 score=0.843 rewards=0.10,0.10,0.20,0.15,0.50,0.20
 ```
 
 ---
@@ -227,14 +277,13 @@ git clone https://huggingface.co/spaces/Wiki05/nexus-config-env
 cd nexus-config-env
 
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+.venv\Scripts\activate  # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
 
 python -m uvicorn server.app:app --host 0.0.0.0 --port 7860 --reload
+# Open: http://localhost:7860/web
 ```
-
-Then open: http://localhost:7860/web
 
 ---
 

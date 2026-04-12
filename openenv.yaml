@@ -1,40 +1,218 @@
 spec_version: 1
+
+# ── Identity ───────────────────────────────────────────────────────────────────
 name: "nexus-config-env"
 display_name: "Nexus Config Env — Kubernetes Hardening"
-version: "0.3.0"
+version: "0.4.0"
 description: >
   A high-fidelity Reinforcement Learning environment for autonomous Kubernetes
   YAML misconfiguration remediation. Trains AI agents to act as Site Reliability
-  Engineers: detecting cloud security vulnerabilities, rightsizing over-provisioned
-  resources, and enforcing policy compliance — all through structured API interaction.
-author: "Vignesh E"
-type: space
-runtime: fastapi
-app: server.app:app
-port: 7860
+  Engineers (SREs): detecting cloud security vulnerabilities, rightsizing
+  over-provisioned resources, and enforcing policy compliance through a
+  structured 8-action discrete workflow. Grader uses 4-dimensional multi-criteria
+  scoring: Protocol Adherence + Diagnosis Accuracy + Remediation Quality + Efficiency.
 
+author: "Vignesh E"
+contact: "vigneshdev1022@gmail.com"
+license: "MIT"
+
+# ── Runtime ────────────────────────────────────────────────────────────────────
+type: "space"
+runtime: "fastapi"
+app: "server.app:app"
+port: 7860
+health_path: "/health"
+reset_path:  "/reset"
+step_path:   "/step"
+state_path:  "/state"
+
+# ── Infrastructure constraints ─────────────────────────────────────────────────
+infra:
+  vcpu: 2
+  memory_gb: 8
+  inference_timeout_min: 20
+
+# ── Action space (discrete, 8 actions) ────────────────────────────────────────
+action_space:
+  type: "discrete"
+  actions:
+    - id: "scan_config"
+      base_reward: +0.10
+      terminal: false
+      description: "Analyse the YAML config for structural misconfigurations."
+    - id: "read_telemetry"
+      base_reward: +0.10
+      terminal: false
+      description: "Read runtime metrics: memory, CPU, CVE scores, security flags."
+    - id: "identify_issue"
+      base_reward: +0.20
+      terminal: false
+      description: "Classify root cause as cost, security, or stability issue."
+    - id: "propose_fix"
+      base_reward: +0.15
+      terminal: false
+      description: "Plan a field change (target_field + new_value) without applying."
+    - id: "apply_fix"
+      base_reward: "+0.50 (correct) / -0.30 (wrong)"
+      terminal: false
+      required_fields: ["target_field", "new_value", "fix_type"]
+      description: "Execute the remediation. +0.50 for correct field+value; negative for wrong."
+    - id: "verify_fix"
+      base_reward: +0.20
+      terminal: true
+      description: "Confirm the fix was applied. Ends episode if fix is complete."
+    - id: "escalate"
+      base_reward: +0.05
+      terminal: true
+      description: "Hand off to human SRE. Episode ends with partial score."
+    - id: "revert_change"
+      base_reward: -0.10
+      terminal: false
+      description: "Undo last change. Restores YAML to pre-fix state."
+
+# ── Observation space ──────────────────────────────────────────────────────────
+observation_space:
+  type: "dict"
+  fields:
+    config_id:
+      type: string
+      description: "Unique scenario identifier for reproducibility."
+    dirty_yaml:
+      type: string
+      description: "Current Kubernetes manifest (may be misconfigured)."
+    telemetry:
+      type: object
+      description: "Runtime metrics: CPU, memory, CVE scores, security flags, cost estimates."
+    message:
+      type: string
+      description: "Human-readable feedback from the last action."
+    fixes_applied:
+      type: array[string]
+      description: "YAML field paths that have been successfully patched."
+    identified_issues:
+      type: array[string]
+      description: "Issue categories explicitly identified during this episode."
+    proposed_field:
+      type: "string|null"
+      description: "Field targeted by the most recent propose_fix action."
+    current_score:
+      type: float
+      range: "[0.001, 0.999]"
+      description: "Cumulative graded episode score."
+    step:
+      type: integer
+      description: "Current step count within the episode."
+    done:
+      type: boolean
+      description: "True when episode is terminated."
+    actions_taken:
+      type: array[string]
+      description: "Ordered list of action_types executed this episode."
+
+# ── Tasks ──────────────────────────────────────────────────────────────────────
 tasks:
   - id: "task_1_easy"
-    name: "Ghost Hunter — Resource Cost Optimization"
+    name: "Ghost Hunter — Resource Cost Optimisation"
     difficulty: "easy"
-    max_steps: 3
-    description: >
-      Identify and fix over-provisioned memory or CPU requests to reduce
-      cloud costs. Telemetry shows actual usage far below requested amounts.
+    max_steps: 6
+    target_category: "cost"
+    target_field: "resources.requests.memory"
+    target_value: "256Mi"
+    scenarios:
+      - id: "easy_1_ghost_ram"
+        description: >
+          API service requests 8 Gi RAM but uses only ~100 MB.
+          Rightsize to 256 Mi to eliminate $47/month of waste.
+      - id: "easy_2_cpu_hoarder"
+        description: >
+          Worker deployment requests 8 CPU cores per pod (×5 replicas)
+          but uses 0.18 cores. Rightsize to 500m to save ~$1,327/month.
+    grader_dimensions:
+      protocol:    20%
+      diagnosis:   25%
+      remediation: 40%
+      efficiency:  15%
 
   - id: "task_2_medium"
     name: "Security Patch — Root Access Elimination"
     difficulty: "medium"
-    max_steps: 3
-    description: >
-      Detect containers running as root (UID 0) or with unsafe filesystem
-      access. Apply the principle of least privilege.
+    max_steps: 8
+    target_category: "security"
+    target_field: "securityContext.runAsUser"
+    target_value: "1000"
+    scenarios:
+      - id: "medium_1_root_user"
+        description: >
+          backend-api runs as root (UID 0) with NET_ADMIN + SYS_PTRACE.
+          CVE risk 9.1. Fix: set runAsUser=1000.
+      - id: "medium_2_writable_rootfs"
+        description: >
+          data-processor has writable root filesystem — writes detected
+          to /etc/passwd. Fix: set readOnlyRootFilesystem=true.
+    grader_dimensions:
+      protocol:    20%
+      diagnosis:   25%
+      remediation: 40%
+      efficiency:  15%
 
   - id: "task_3_hard"
-    name: "Privilege Patch — Kernel Isolation Enforcement"
+    name: "Privilege Patch — Container Escape Prevention"
     difficulty: "hard"
-    max_steps: 3
-    description: >
-      Identify and close container-escape vulnerabilities caused by
-      privileged mode or host namespace sharing. Complex multi-vector
-      attack surface requires nuanced remediation.
+    max_steps: 10
+    target_category: "security"
+    target_field: "securityContext.privileged"
+    target_value: "false"
+    scenarios:
+      - id: "hard_1_privileged_kube_system"
+        description: >
+          CRITICAL: infra-agent in kube-system with privileged=true,
+          hostPID=true, hostNetwork=true, host / mounted.
+          Exploitable via CVE-2022-0847 (Dirty Pipe). Fix: set privileged=false.
+      - id: "hard_2_host_network_sniff"
+        description: >
+          network-monitor with hostNetwork=true + privileged=true + NET_RAW.
+          Actively sniffing cluster traffic. Fix: set privileged=false.
+    grader_dimensions:
+      protocol:    20%
+      diagnosis:   25%
+      remediation: 40%
+      efficiency:  15%
+
+# ── Grader specification ───────────────────────────────────────────────────────
+grader:
+  type: "multi_criteria_deterministic"
+  score_range: "(0.001, 0.999)"
+  variance: true
+  per_task_graders: true
+  dimensions:
+    - name: "Protocol Adherence"
+      weight: 0.20
+      description: >
+        Was scan_config or read_telemetry used before apply_fix?
+        Was identify_issue called before applying? Full credit requires both.
+    - name: "Diagnosis Accuracy"
+      weight: 0.25
+      description: >
+        Did the agent correctly classify the issue category (cost/security/stability)?
+        Did it identify the exact affected YAML field?
+    - name: "Remediation Quality"
+      weight: 0.40
+      description: >
+        Was apply_fix submitted with the exact correct target_field AND new_value?
+        Partial credit for correct field with wrong value (+0.10).
+        Negative reward for wrong field (-0.20 to -0.30).
+    - name: "Efficiency Bonus"
+      weight: 0.15
+      description: >
+        Reward for resolving the issue within 50% of step budget.
+        Graduated: full bonus ≤50%, partial ≤75%, minimal ≤100%.
+
+# ── Baseline results ───────────────────────────────────────────────────────────
+baseline:
+  model: "Qwen/Qwen2.5-72B-Instruct"
+  results_file: "baseline_results.json"
+  scores:
+    task_1_easy:   0.843
+    task_2_medium: 0.748
+    task_3_hard:   0.623
+    overall:       0.738

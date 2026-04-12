@@ -1,0 +1,27 @@
+{
+  "model": "Qwen/Qwen2.5-72B-Instruct",
+  "api": "https://router.huggingface.co/v1",
+  "env_url": "https://wiki05-nexus-config-env.hf.space",
+  "runs": 1,
+  "results": {
+    "task_1_easy": {
+      "name": "Ghost Hunter \u2014 Resource Cost Optimisation",
+      "difficulty": "easy",
+      "runs": [0.843],
+      "average": 0.843
+    },
+    "task_2_medium": {
+      "name": "Security Patch \u2014 Root Access Elimination",
+      "difficulty": "medium",
+      "runs": [0.748],
+      "average": 0.748
+    },
+    "task_3_hard": {
+      "name": "Privilege Patch \u2014 Container Escape Prevention",
+      "difficulty": "hard",
+      "runs": [0.623],
+      "average": 0.623
+    }
+  },
+  "overall": 0.738
+}
