@@ -1,0 +1,21 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
+  "python.analysis.include": [
+    "${workspaceFolder}"
+  ],
+  "python.analysis.exclude": [
+    "**/.venv/**",
+    "**/__pycache__/**",
+    "**/*.egg-info/**"
+  ],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.reportMissingImports": "warning",
+  "python.analysis.reportMissingModuleSource": "none",
+  "python.analysis.autoImportCompletions": true,
+  "[python]": {
+    "editor.formatOnSave": false
+  }
+}

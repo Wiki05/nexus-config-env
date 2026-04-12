@@ -17,3 +17,6 @@ env/
 # Tooling/OS
 .DS_Store
 .lock
+
+# Local convenience scripts (not for deployment)
+openenv.cmd

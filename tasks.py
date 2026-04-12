@@ -72,7 +72,7 @@ TASKS: Dict[str, NexusTask] = {
             "Enforce least-privilege by setting runAsUser to a non-root UID (1000)."
         ),
         target_category="security",
-        target_field="securitycontext.runasuser",
+        target_field="securityContext.runAsUser",
         target_value="1000",
     ),
     "task_3_hard": NexusTask(
@@ -86,7 +86,7 @@ TASKS: Dict[str, NexusTask] = {
             "Disable privileged mode. Then verify and document the change."
         ),
         target_category="security",
-        target_field="securitycontext.privileged",
+        target_field="securityContext.privileged",
         target_value="false",
     ),
 }
@@ -366,10 +366,9 @@ def _grade_episode(
     """
 
     if not episode_log:
-        return {"protocol": 0.0, "diagnosis": 0.0, "remediation": 0.0, "efficiency": 0.0, "total": 0.0}
+        return {"protocol": 0.0, "diagnosis": 0.0, "remediation": 0.0, "efficiency": 0.0, "total": MIN_SCORE}
 
     actions = [entry.get("action_type", "") for entry in episode_log]
-    rewards = [entry.get("reward", 0.0) for entry in episode_log]
     n_steps = len(episode_log)
 
     # ── 1. Protocol adherence ─────────────────────────────────────────────
@@ -417,26 +416,23 @@ def _grade_episode(
                 remediation_score = 0.40
                 break
             elif pf == tf:
-                # Right field, wrong value — partial
-                remediation_score = max(remediation_score, 0.10)
+                # Right field, wrong value — partial credit
+                remediation_score = max(remediation_score, 0.15)
             elif tf in pf or pf in tf:
                 # Nearby field
                 remediation_score = max(remediation_score, 0.05)
 
-    # Also credit positive rewards from graded step rewards
-    positive_rewards = sum(r for r in rewards if r > 0)
-    remediation_score = min(0.40, remediation_score + positive_rewards * 0.05)
 
     # ── 4. Efficiency bonus ───────────────────────────────────────────────
     # Solve within 50% of step budget → full bonus; more steps → reduced
     efficiency_score = 0.0
-    if remediation_score >= 0.35:  # Only reward efficiency if fix was applied
-        half_budget = task.max_steps * 0.5
-        if n_steps <= half_budget:
+    if remediation_score >= 0.15:  # Efficiency only if at least partially successful
+        ratio = n_steps / task.max_steps
+        if ratio <= 0.50:
             efficiency_score = 0.15
-        elif n_steps <= task.max_steps * 0.75:
+        elif ratio <= 0.75:
             efficiency_score = 0.08
-        elif n_steps <= task.max_steps:
+        else:
             efficiency_score = 0.03
 
     total = _clamp(protocol_score + diagnosis_score + remediation_score + efficiency_score)

@@ -10,6 +10,6 @@ All scenario and grader definitions have been moved to tasks.py.
 This module re-exports them so existing imports continue to work.
 """
 
-from tasks import SCENARIOS, GRADERS, TASKS, MIN_SCORE, MAX_SCORE  # noqa: F401
+from tasks import SCENARIOS, GRADERS, TASKS, MIN_SCORE, MAX_SCORE  # type: ignore[import]  # noqa: F401
 
 __all__ = ["SCENARIOS", "GRADERS", "TASKS", "MIN_SCORE", "MAX_SCORE"]

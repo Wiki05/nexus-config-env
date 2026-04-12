@@ -1,0 +1,17 @@
+{
+  "include": ["."],
+  "exclude": [".venv", "__pycache__", "*.egg-info", "uv.lock"],
+  "extraPaths": [
+    ".",
+    "./server"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none",
+  "reportMissingTypeStubs": "none",
+  "reportUndefinedVariable": "warning",
+  "reportGeneralTypeIssues": "none"
+}

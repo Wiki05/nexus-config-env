@@ -20,17 +20,25 @@ Gradio playground mounted at /web.
 
 import json
 import sys
+import warnings
 import uvicorn
 import gradio as gr
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
+# Suppress Gradio 6.0 deprecation warning — theme/css still work via mount_gradio_app
+warnings.filterwarnings(
+    "ignore",
+    message="The parameters have been moved from the Blocks constructor",
+    category=UserWarning,
+)
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from server.nexus_environment import NexusEnvironment
-from models import NexusAction, NexusObservation
-from tasks import SCENARIOS, TASKS
+from server.nexus_environment import NexusEnvironment  # type: ignore[import]  # noqa: E402
+from models import NexusAction, NexusObservation        # type: ignore[import]  # noqa: E402
+from tasks import SCENARIOS, TASKS                       # type: ignore[import]  # noqa: E402
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -107,6 +115,11 @@ async def api_reset(task_id: str = "task_1_easy"):
         "info":   {"message": f"Episode started: {task_id}"},
     })
 
+@app.get("/manifest.json")
+async def manifest():
+    # Dummy manifest to prevent 404 errors in Gradio/Space logs
+    return {"name": "Nexus-Config-Env", "short_name": "Nexus", "start_url": "/"}
+
 @app.post("/step")
 async def api_step(request: Request):
     if _api_env.current_scenario is None:
@@ -128,10 +141,55 @@ async def api_step(request: Request):
             "info":   {"warning": "Episode complete. Call POST /reset to start a new one."},
         })
     try:
-        body   = await request.json()
-        action = NexusAction(**body)
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    try:
+        # Handle standard OpenEnv evaluator payload format {"action": {...}}
+        if "action" in body and isinstance(body["action"], dict):
+            action_data = body["action"]
+        else:
+            action_data = dict(body)
+
+        # Handle cases where client sends "action" key instead of "action_type"
+        if "action" in action_data and "action_type" not in action_data:
+            action_data["action_type"] = action_data.pop("action")
+
+        # Strip unknown keys that Pydantic would reject — only keep known fields
+        known_fields = {"action_type", "target_field", "new_value", "fix_type", "reasoning"}
+        action_data = {k: v for k, v in action_data.items() if k in known_fields}
+
+        # Sanitize fix_type — only allow valid literals or None
+        valid_fix_types = {"cost", "security", "stability"}
+        if action_data.get("fix_type") and str(action_data["fix_type"]).lower() in valid_fix_types:
+            action_data["fix_type"] = str(action_data["fix_type"]).lower()
+        else:
+            action_data["fix_type"] = None
+
+        # Ensure action_type is valid
+        valid_actions = {
+            "scan_config", "read_telemetry", "identify_issue", "propose_fix",
+            "apply_fix", "verify_fix", "escalate", "revert_change",
+        }
+        if action_data.get("action_type") not in valid_actions:
+            action_data["action_type"] = "scan_config"
+
+        # Sanitize optional string fields
+        for field in ("target_field", "new_value", "reasoning"):
+            if action_data.get(field) is not None:
+                action_data[field] = str(action_data[field]).strip() or None
+
+        action = NexusAction(**action_data)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid action: {exc}")
+        # Never 422 — return a graceful error so the episode can continue
+        cur = _api_env._get_obs() if _api_env.current_scenario else None
+        return JSONResponse({
+            "observation": cur.model_dump() if cur else None,
+            "reward": 0.0,
+            "done":   False,
+            "info":   {"error": f"Invalid action payload: {exc}", "message": "Action rejected — check payload format."},
+        }, status_code=200)
 
     obs, reward, done, info = await _api_env.step(action)
     return JSONResponse({
@@ -207,8 +265,9 @@ async def ui_step(action_type, fix_type_val, target_field, new_value, reasoning)
         empty = "### ⚠️ No active episode\nClick **Reset** to load a task."
         return empty, "", "Click Reset first.", _safe_json({"warning": "Call Reset first."})
 
-    cur = _ui_env._get_obs()
-    if cur.done or cur.step >= MAX_STEPS:
+    cur       = _ui_env._get_obs()
+    max_steps = int(getattr(_ui_env, "max_steps", MAX_STEPS))
+    if cur.done or cur.step >= max_steps:
         p = _build_payload(cur, _ui_env)
         return (
             "### ✅ Episode complete — click **Reset** to start again.",
@@ -218,7 +277,6 @@ async def ui_step(action_type, fix_type_val, target_field, new_value, reasoning)
         )
 
     try:
-        # Build action — optional fields only if non-empty
         action_kwargs = {
             "action_type": action_type,
             "reasoning":   reasoning or "",
@@ -236,9 +294,10 @@ async def ui_step(action_type, fix_type_val, target_field, new_value, reasoning)
         p["last_reward"] = round(float(reward), 3)
         p["info"]        = info
         env_msg = info.get("message", "")
-        return _fmt_status(obs), getattr(obs, "dirty_yaml", ""), env_msg, _safe_json(p)
+        return _fmt_status(obs, _ui_env), getattr(obs, "dirty_yaml", ""), env_msg, _safe_json(p)
     except Exception as e:
         return f"❌ Error: {e}", "", str(e), _safe_json({"error": str(e)})
+
 
 async def ui_state():
     if _ui_env.current_scenario is None:
@@ -248,283 +307,177 @@ async def ui_state():
         )
     obs = _ui_env._get_obs()
     p   = _build_payload(obs, _ui_env)
-    return _fmt_status(obs), getattr(obs, "dirty_yaml", ""), obs.message, _safe_json(p)
+    return _fmt_status(obs, _ui_env), getattr(obs, "dirty_yaml", ""), obs.message, _safe_json(p)
 
 
 # ── Gradio UI ──────────────────────────────────────────────────────────────────
 
-ACTION_SPACE_HTML = """
-<style>
-  .as-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
-  .as-table th { background:#1f2d45; color:#58a6ff; padding:8px 10px; text-align:left; }
-  .as-table td { padding:7px 10px; border-bottom:1px solid #21262d; color:#c9d1d9; }
-  .as-table tr:hover td { background:#161b22; }
-  .rew-pos  { color:#3fb950; font-weight:700; }
-  .rew-neg  { color:#f85149; font-weight:700; }
-  .rew-cond { color:#d29922; font-weight:700; }
-  .badge    { display:inline-block; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:600; }
-  .badge-t  { background:#1f2d45; color:#58a6ff; }
-  .badge-f  { background:#21262d; color:#8b949e; }
-</style>
-<table class='as-table'>
-  <thead><tr>
-    <th>Action</th><th>Reward</th><th>Terminal</th><th>Description</th>
-  </tr></thead>
-  <tbody>
-    <tr><td><code>scan_config</code></td>    <td class='rew-pos'>+0.10</td><td><span class='badge badge-f'>No</span></td> <td>Analyse YAML structure for misconfigurations</td></tr>
-    <tr><td><code>read_telemetry</code></td> <td class='rew-pos'>+0.10</td><td><span class='badge badge-f'>No</span></td> <td>Read runtime CPU, RAM, CVE score signals</td></tr>
-    <tr><td><code>identify_issue</code></td> <td class='rew-pos'>+0.20</td><td><span class='badge badge-f'>No</span></td> <td>Classify root cause (cost / security / stability)</td></tr>
-    <tr><td><code>propose_fix</code></td>    <td class='rew-pos'>+0.15</td><td><span class='badge badge-f'>No</span></td> <td>Plan field change without executing</td></tr>
-    <tr><td><code>apply_fix</code></td>      <td class='rew-cond'>±0.50/−0.30</td><td><span class='badge badge-f'>No</span></td><td>Execute remediation — +0.50 correct, −0.30 wrong</td></tr>
-    <tr><td><code>verify_fix</code></td>     <td class='rew-pos'>+0.20</td><td><span class='badge badge-t'>Yes ✓</span></td><td>Confirm fix applied — ends episode</td></tr>
-    <tr><td><code>escalate</code></td>       <td class='rew-pos'>+0.05</td><td><span class='badge badge-t'>Yes ✓</span></td><td>Hand off to human SRE — ends episode</td></tr>
-    <tr><td><code>revert_change</code></td>  <td class='rew-neg'>−0.10</td><td><span class='badge badge-f'>No</span></td><td>Undo last change (use only if wrong fix applied)</td></tr>
-  </tbody>
-</table>
-"""
-
-GRADER_HTML = """
-<style>
-  .gr-table { width:100%; border-collapse:collapse; font-size:0.85rem; margin-top:4px; }
-  .gr-table th { background:#1a2d1a; color:#3fb950; padding:7px 10px; text-align:left; }
-  .gr-table td { padding:7px 10px; border-bottom:1px solid #21262d; color:#c9d1d9; }
-</style>
-<table class='gr-table'>
-  <thead><tr><th>Dimension</th><th>Weight</th><th>Criteria</th></tr></thead>
-  <tbody>
-    <tr><td><strong>Protocol</strong></td>    <td>20%</td><td>scan_config / read_telemetry used before apply_fix?</td></tr>
-    <tr><td><strong>Diagnosis</strong></td>   <td>25%</td><td>Correct issue category + exact field identified?</td></tr>
-    <tr><td><strong>Remediation</strong></td> <td>40%</td><td>Exact target_field + new_value applied?</td></tr>
-    <tr><td><strong>Efficiency</strong></td>  <td>15%</td><td>Resolved within 50% of step budget?</td></tr>
-  </tbody>
-</table>
-"""
-
-HERO_HTML = """
-<style>
-  body, .gradio-container { background: #0d1117 !important; color: #e6edf3 !important; }
-  .hero-banner {
-    background: linear-gradient(135deg, #0d1930 0%, #0d1117 60%, #1a0d30 100%);
-    border: 1px solid #1f6feb44;
-    border-radius: 14px;
-    padding: 28px 36px 22px;
-    margin-bottom: 16px;
-  }
-  .hero-banner h1 { color: #58a6ff; font-size: 2rem; margin: 0 0 6px; }
-  .hero-banner p  { color: #8b949e; margin: 0; font-size: 0.9rem; line-height: 1.6; }
-  .hero-banner .badges { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
-  .hero-banner .badge-pill {
-    background: #21262d; border: 1px solid #30363d; border-radius: 20px;
-    color: #e6edf3; font-size: 0.78rem; padding: 3px 12px;
-  }
-  .gradio-container input[type="text"], .gradio-container textarea {
-    background: #161b22 !important; color: #e6edf3 !important;
-    border: 1px solid #30363d !important; border-radius: 6px !important;
-  }
-  .gr-button { border-radius: 8px !important; font-weight: 600 !important; }
-  input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  input[type=number] { -moz-appearance:textfield; }
-</style>
-<div class="hero-banner">
-  <h1>🛡️ Nexus-Config-Env</h1>
-  <p>
-    <strong>Autonomous Kubernetes Hardening via Reinforcement Learning</strong><br>
-    Train AI agents to act as SREs — detect security vulnerabilities,
-    rightsize over-provisioned resources, and enforce policy compliance
-    through an 8-action discrete workflow with multi-criteria scoring.
-  </p>
-  <div class="badges">
-    <span class="badge-pill">🏆 Meta × Scaler OpenEnv 2026</span>
-    <span class="badge-pill">⚡ 8-Action Discrete Space</span>
-    <span class="badge-pill">📊 Multi-Criteria Grader</span>
-    <span class="badge-pill">🔒 K8s Security Hardening</span>
-    <span class="badge-pill">💰 Cloud Cost Optimisation</span>
-  </div>
-</div>
-"""
-
 with gr.Blocks(
     title="Nexus-Config-Env | Kubernetes Hardening",
-    theme=gr.themes.Base(
-        primary_hue="blue",
-        secondary_hue="indigo",
-        neutral_hue="slate",
-    ),
+    theme=gr.themes.Base(primary_hue="slate", neutral_hue="slate"),
+    css="""
+    body, .gradio-container { background: #0d1117 !important; color: #e6edf3 !important; }
+    .gr-panel, .gr-box, .gr-form, .gap {
+        background: #0d1117 !important;
+    }
+    .block { border: none !important; }
+
+    /* Inputs */
+    select, input, textarea, .wrap {
+        background: #161b22 !important;
+        color: #e6edf3 !important;
+        border: 1px solid #30363d !important;
+        border-radius: 6px !important;
+    }
+    label > span { color: #8b949e !important; font-size: 13px !important; font-weight: 500 !important; }
+
+    /* Primary button (Step) */
+    button.primary {
+        background: #1a7f37 !important; color: #fff !important;
+        border: none !important; border-radius: 6px !important;
+        font-weight: 600 !important; font-size: 15px !important;
+    }
+    /* Secondary buttons (Reset, Get state) */
+    button.secondary {
+        background: #21262d !important; color: #c9d1d9 !important;
+        border: 1px solid #30363d !important; border-radius: 6px !important;
+        font-weight: 500 !important; font-size: 15px !important;
+    }
+    button:hover { opacity: 0.85 !important; }
+
+    /* Code / JSON blocks */
+    .code-wrap, .cm-editor, .code {
+        background: #161b22 !important;
+        border: 1px solid #30363d !important;
+        border-radius: 6px !important;
+    }
+
+    /* Accordion */
+    details > summary {
+        background: #161b22 !important;
+        border: 1px solid #30363d !important;
+        border-radius: 6px !important;
+        padding: 8px 12px !important;
+        color: #c9d1d9 !important;
+        font-weight: 500 !important;
+    }
+
+    /* Left-panel code snippets */
+    pre, code {
+        background: #161b22 !important;
+        border: 1px solid #30363d !important;
+        border-radius: 5px !important;
+        padding: 8px 10px !important;
+        font-size: 12px !important;
+        color: #79c0ff !important;
+    }
+    """,
 ) as demo:
 
-    gr.HTML(HERO_HTML)
-
     with gr.Row():
-        # ── Left panel ─────────────────────────────────────────────────────
-        with gr.Column(scale=1, variant="panel"):
+        # ── Left sidebar ────────────────────────────────────────────────────
+        with gr.Column(scale=1, min_width=280):
+            gr.Markdown("### Quick Start")
 
-            with gr.Accordion("⚡ Action Space", open=True):
-                gr.HTML(ACTION_SPACE_HTML)
-
-            with gr.Accordion("📊 Grader Logic", open=True):
-                gr.HTML(GRADER_HTML)
+            with gr.Accordion("Connect to this environment", open=True):
                 gr.Markdown("""
-> **Deterministic + Varied**: Each episode produces a different score based on
-> the agent's trajectory. Grader never returns a constant value.
-> Score range: **(0.001, 0.999)** strictly.
-                """)
-
-            with gr.Accordion("📖 Quick Start", open=False):
-                gr.Markdown("""
-## Optimal SRE Workflow
-
-For best score, follow this protocol every episode:
-
-```
-1. scan_config       → study the broken YAML
-2. read_telemetry    → check runtime signals
-3. identify_issue    → classify: cost / security
-4. propose_fix       → confirm the target field
-5. apply_fix         → set the hardened value
-6. verify_fix        → confirm and complete
-```
-
-## Task Examples
-
-**Easy — Ghost RAM (cost):**
-```json
-{"action_type":"apply_fix",
- "fix_type":"cost",
- "target_field":"resources.requests.memory",
- "new_value":"256Mi"}
-```
-
-**Medium — Root User (security):**
-```json
-{"action_type":"apply_fix",
- "fix_type":"security",
- "target_field":"securityContext.runAsUser",
- "new_value":"1000"}
-```
-
-**Hard — Privileged Mode (security):**
-```json
-{"action_type":"apply_fix",
- "fix_type":"security",
- "target_field":"securityContext.privileged",
- "new_value":"false"}
-```
-
-## API Endpoints
-```
-GET  /health
-GET  /metadata
-GET  /tasks
-GET  /schema
-GET  /state
-POST /reset?task_id=<id>
-POST /step  (JSON body)
-```
-
-## Agent Quickstart
+Connect from Python using `OpenEnv`:
 ```python
 from openenv import OpenEnv
-env = OpenEnv.from_env('Wiki05/nexus-config-env')
-obs, _ = env.reset('task_1_easy')
+env = OpenEnv.from_env("Wiki05/nexus-config-env")
+obs, info = env.reset("task_1_easy")
 ```
-                """)
+Or connect directly to a running server:
+```python
+env = OpenEnv(base_url="http://localhost:7860")
+```
+""")
 
-            with gr.Accordion("🏗️ Architecture", open=False):
+            with gr.Accordion("Contribute to this environment", open=False):
                 gr.Markdown("""
-## Environment Design
-
+Submit improvements via pull request on the Hugging Face Hub.
+```bash
+openenv fork Wiki05/nexus-config-env --repo-id <your-username>/nexus-config-env
 ```
-AI Agent (any LLM via OpenAI client)
-        │
-        ├── POST /reset?task_id=X
-        │       → NexusObservation (dirty YAML + telemetry)
-        │
-        ├── POST /step  (NexusAction JSON)
-        │       → reward + updated observation
-        │
-        └── GET  /state
-                → read-only episode snapshot
+Then make your changes and submit a pull request:
+```bash
+cd nexus-config-env
+openenv push Wiki05/nexus-config-env --create-pr
 ```
+""")
 
-### 4-Criteria Grader
+            with gr.Accordion("README", open=False):
+                try:
+                    with open("README.md", "r", encoding="utf-8") as f:
+                        gr.Markdown(f.read())
+                except FileNotFoundError:
+                    gr.Markdown("README.md not found.")
 
-Each episode is scored across 4 independent dimensions:
+        # ── Right panel ─────────────────────────────────────────────────────
+        with gr.Column(scale=2):
+            gr.Markdown("## Playground\nClick **Reset** to start a new episode.")
 
-| Dimension | Max | What it measures |
-|:----------|----:|:-----------------|
-| Protocol  | 0.20 | Scanned before fixing? |
-| Diagnosis | 0.25 | Correct category + field? |
-| Remediation | 0.40 | Exact field + value fixed? |
-| Efficiency | 0.15 | Completed within step budget? |
-                """)
-
-            gr.Markdown("---")
-            gr.Markdown(
-                "Built by **[Wiki05 (Vignesh E)](https://github.com/Wiki05)** "
-                "| Meta × Scaler OpenEnv 2026"
+            task_dd = gr.Dropdown(
+                choices=["task_1_easy", "task_2_medium", "task_3_hard"],
+                value="task_1_easy",
+                label="Task ID",
+                interactive=True,
+            )
+            action_dd = gr.Dropdown(
+                choices=[
+                    "scan_config", "read_telemetry", "identify_issue",
+                    "propose_fix", "apply_fix", "verify_fix",
+                    "escalate", "revert_change",
+                ],
+                value="scan_config",
+                label="Action",
+                interactive=True,
             )
 
-        # ── Right panel: playground ─────────────────────────────────────────
-        with gr.Column(scale=2):
-            gr.Markdown("## 🎮 SRE Remediation Playground")
-
-            with gr.Group():
-                task_dd = gr.Dropdown(
-                    choices=["task_1_easy", "task_2_medium", "task_3_hard"],
-                    value="task_1_easy",
-                    label="Hardening Task",
-                    interactive=True,
-                )
-                action_dd = gr.Dropdown(
-                    choices=[
-                        "scan_config",
-                        "read_telemetry",
-                        "identify_issue",
-                        "propose_fix",
-                        "apply_fix",
-                        "verify_fix",
-                        "escalate",
-                        "revert_change",
-                    ],
-                    value="scan_config",
-                    label="Action Type",
-                    interactive=True,
-                )
+            with gr.Row():
                 fix_type_dd = gr.Dropdown(
                     choices=["none", "cost", "security", "stability"],
-                    value="none",
-                    label="Fix Type (for identify_issue / apply_fix)",
-                    interactive=True,
+                    value="none", label="Fix Type", interactive=True,
                 )
-                with gr.Row():
-                    target_tb = gr.Textbox(
-                        label="Target Field (dot notation)",
-                        placeholder="e.g., securityContext.privileged",
-                        lines=1, max_lines=1,
-                    )
-                    value_tb = gr.Textbox(
-                        label="New Value",
-                        placeholder="e.g., false",
-                        lines=1, max_lines=1,
-                    )
-                reasoning_tb = gr.Textbox(
-                    label="Reasoning (optional)",
-                    placeholder="Why are you taking this action?",
+                target_tb = gr.Textbox(
+                    label="Target Field",
+                    placeholder="e.g., securityContext.privileged",
+                    lines=1, max_lines=1,
+                )
+                value_tb = gr.Textbox(
+                    label="New Value",
+                    placeholder="e.g., false",
                     lines=1, max_lines=1,
                 )
 
+            reasoning_tb = gr.Textbox(
+                label="Reasoning",
+                placeholder="Enter reason...",
+                lines=1, max_lines=1,
+            )
+
+            # ── Three buttons in one row — just like friend's UI ───────────
             with gr.Row():
-                btn_reset  = gr.Button("🔄 Reset",     variant="primary")
-                btn_step   = gr.Button("▶️ Step",      variant="secondary")
-                btn_state  = gr.Button("📊 Get State", variant="secondary")
+                btn_step  = gr.Button("Step",      variant="primary",   scale=1)
+                btn_reset = gr.Button("Reset",     variant="secondary", scale=1)
+                btn_state = gr.Button("Get state", variant="secondary", scale=1)
 
-            gr.Markdown("### 📈 Episode Status")
+            # ── Status ─────────────────────────────────────────────────────
+            gr.Markdown("### Status")
             status_md = gr.Markdown("Select a task and click Reset to begin.")
-            env_msg   = gr.Textbox(label="Environment Message", interactive=False, lines=2)
-            yaml_out  = gr.Code(label="Current YAML State", language="yaml", interactive=False)
+            env_msg   = gr.Textbox(
+                label="Environment Message", interactive=False, lines=3,
+            )
 
-            with gr.Accordion("🔍 Raw JSON Response", open=False):
+            # ── Raw JSON collapsed ─────────────────────────────────────────
+            with gr.Accordion("Raw JSON response", open=False):
                 json_out = gr.Code(label="", language="json")
+
+            # YAML kept hidden (still wired for future use)
+            yaml_out = gr.Code(
+                label="Current YAML State", language="yaml",
+                interactive=False, visible=False,
+            )
 
     # ── Event wiring ───────────────────────────────────────────────────────────
     btn_reset.click(

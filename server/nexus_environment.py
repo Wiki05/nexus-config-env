@@ -21,11 +21,11 @@ from copy import deepcopy
 from typing import Dict, List, Optional, Tuple
 
 try:
-    from models import NexusAction, NexusObservation
-    from tasks import TASKS, SCENARIOS, GRADERS, MIN_SCORE, MAX_SCORE, _clamp
+    from models import NexusAction, NexusObservation          # type: ignore[import]
+    from tasks import TASKS, SCENARIOS, GRADERS, MIN_SCORE, MAX_SCORE, _clamp  # type: ignore[import]
 except ImportError:
-    from ..models import NexusAction, NexusObservation
-    from ..tasks import TASKS, SCENARIOS, GRADERS, MIN_SCORE, MAX_SCORE, _clamp
+    from ..models import NexusAction, NexusObservation         # type: ignore[import]
+    from ..tasks import TASKS, SCENARIOS, GRADERS, MIN_SCORE, MAX_SCORE, _clamp  # type: ignore[import]
 
 
 # ── Per-action base rewards ────────────────────────────────────────────────────
@@ -324,6 +324,19 @@ class NexusEnvironment:
         target_f  = scenario.get("target", "").lower().replace("/", ".").strip()
         target_v  = str(scenario.get("limit", "")).lower().strip()
 
+        # Guard: if target_field or new_value is missing, penalise and explain
+        if not action.target_field or not action.new_value:
+            return -0.10, {
+                "action":      "apply_fix",
+                "fix_correct": False,
+                "field_match": "none",
+                "value_match": False,
+                "message": (
+                    "apply_fix requires both target_field and new_value. "
+                    "Use propose_fix first to identify the exact field and value."
+                ),
+            }
+
         provided_f = str(action.target_field or "").lower().replace("/", ".").strip()
         provided_v = str(action.new_value or "").lower().strip()
 
@@ -457,7 +470,7 @@ class NexusEnvironment:
 
     def _run_grader_breakdown(self) -> dict:
         """Return detailed grader breakdown for the episode log."""
-        from tasks import _grade_episode
+        from tasks import _grade_episode  # type: ignore[import]
         task = TASKS.get(self.current_task_id)
         if task is None:
             return {}
