@@ -29,15 +29,16 @@ except ImportError:
 
 
 # ── Per-action base rewards ────────────────────────────────────────────────────
-# These are added to the running score BEFORE grader adjustment.
+# Scaled so sum(rewards) for any episode is strictly inside (0, 1).
+# Perfect 6-step run: 0.06+0.06+0.12+0.09+0.40+0.12 = 0.85 (max possible ≈ 0.92)
 ACTION_REWARDS: Dict[str, float] = {
-    "scan_config":    +0.10,
-    "read_telemetry": +0.10,
-    "identify_issue": +0.20,
-    "propose_fix":    +0.15,
-    "apply_fix":      +0.00,   # earned dynamically by grader
-    "verify_fix":     +0.20,
-    "escalate":       +0.05,
+    "scan_config":    +0.06,
+    "read_telemetry": +0.06,
+    "identify_issue": +0.12,
+    "propose_fix":    +0.09,
+    "apply_fix":      +0.00,   # earned dynamically by _handle_apply_fix
+    "verify_fix":     +0.12,
+    "escalate":       +0.04,
     "revert_change":  -0.10,
 }
 
@@ -192,9 +193,9 @@ class NexusEnvironment:
                 + f" Step budget ({self.max_steps}) exhausted."
             )
 
-        # ── Score accumulation (cumulative, clamped to [0.0, 0.99]) ───────────
-        reward = round(max(-0.5, min(0.99, reward)), 3)
-        self.current_score = round(min(0.99, max(0.0, self.current_score + reward)), 3)
+        # ── Score accumulation (cumulative, clamped to [MIN_SCORE, 0.99]) ─────
+        reward = round(max(MIN_SCORE, min(0.99, reward)), 3)
+        self.current_score = round(min(0.99, max(MIN_SCORE, self.current_score + reward)), 3)
 
         # ── Run full episode grader if done ────────────────────────────────
         if self.done and self.current_task_id in GRADERS:
@@ -255,9 +256,13 @@ class NexusEnvironment:
         target_type = self.current_scenario.get("type", "security").lower()
         provided_type = str(action.fix_type or "").lower()
 
+        # Complexity bonus: security/stability issues are harder to identify than cost
+        _CATEGORY_BONUS: Dict[str, float] = {"cost": 0.00, "security": 0.02, "stability": 0.01}
+
         if provided_type == target_type:
+            category_bonus = _CATEGORY_BONUS.get(target_type, 0.0)
+            reward = base + category_bonus
             self.identified_issues.append(provided_type)
-            reward = base
             info = {
                 "action": "identify_issue",
                 "category_correct": True,
@@ -267,7 +272,8 @@ class NexusEnvironment:
                 ),
             }
         else:
-            reward = max(0.0, base - 0.10)
+            # Wrong category — return floor reward (avoid exact 0.0)
+            reward = MIN_SCORE
             info = {
                 "action": "identify_issue",
                 "category_correct": False,
@@ -308,7 +314,7 @@ class NexusEnvironment:
                 ),
             }
         else:
-            reward = 0.0
+            reward = MIN_SCORE
             info = {
                 "action": "propose_fix",
                 "field_correct": False,
@@ -343,7 +349,7 @@ class NexusEnvironment:
         # ── Correct field + correct value ──────────────────────────────────
         if provided_f == target_f and provided_v == target_v:
             self._patch_yaml(action)
-            reward = 0.50
+            reward = 0.40
             info  = {
                 "action":      "apply_fix",
                 "fix_correct": True,
@@ -398,15 +404,20 @@ class NexusEnvironment:
 
     def _handle_verify_fix(self, base: float) -> Tuple[float, dict]:
         if self.fix_applied:
-            reward = base
+            # Scale verify reward by task difficulty — harder task = higher close-out reward
+            task = TASKS.get(self.current_task_id)
+            difficulty = task.difficulty if task else "medium"
+            _VERIFY_REWARD: Dict[str, float] = {"easy": 0.10, "medium": 0.12, "hard": 0.14}
+            reward = _VERIFY_REWARD.get(difficulty, base)
             info   = {
                 "action":       "verify_fix",
                 "fix_applied":  True,
+                "difficulty":   difficulty,
                 "current_yaml": self.current_scenario.get("dirty_yaml", ""),
                 "message":      "Fix verified! YAML has been patched. Episode complete.",
             }
         else:
-            reward = 0.0
+            reward = MIN_SCORE
             info   = {
                 "action":      "verify_fix",
                 "fix_applied": False,

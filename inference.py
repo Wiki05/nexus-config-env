@@ -355,8 +355,8 @@ def run_task(task_id: str, http_client: httpx.Client) -> float:
             env_msg   = (data.get("info") or {}).get("message")
             error     = (data.get("info") or {}).get("error")
 
-            # Clamp reward to [0.0, 1.0] — required by hackathon grader range check
-            reward = round(max(0.0, min(1.0, reward)), 2)
+            # Clamp to (0, 1) exclusive — spec requires strictly between 0 and 1 at 2dp
+            reward = round(max(0.01, min(0.99, reward)), 2)
             rewards.append(reward)
             steps_taken = step
             if done:

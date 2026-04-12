@@ -435,14 +435,23 @@ def _grade_episode(
         else:
             efficiency_score = 0.03
 
-    total = _clamp(protocol_score + diagnosis_score + remediation_score + efficiency_score)
+    raw = _clamp(protocol_score + diagnosis_score + remediation_score + efficiency_score)
+
+    # 5. Per-task difficulty scale ─────────────────────────────────────────
+    # Harder tasks reward identical solution quality proportionally more.
+    # Guarantees task_1 != task_2 != task_3 even for a perfect agent.
+    _DIFFICULTY_SCALE = {"easy": 0.93, "medium": 1.00, "hard": 1.07}
+    scale = _DIFFICULTY_SCALE.get(task.difficulty, 1.0)
+    total = _clamp(raw * scale)
 
     return {
-        "protocol": round(protocol_score, 3),
-        "diagnosis": round(diagnosis_score, 3),
+        "protocol":    round(protocol_score, 3),
+        "diagnosis":   round(diagnosis_score, 3),
         "remediation": round(remediation_score, 3),
-        "efficiency": round(efficiency_score, 3),
-        "total": total,
+        "efficiency":  round(efficiency_score, 3),
+        "difficulty":  task.difficulty,
+        "scale":       scale,
+        "total":       total,
     }
 
 
