@@ -260,7 +260,7 @@ async def ui_reset(task_id):
     try:
         obs = await _ui_env.reset(task_id)
         p   = _build_payload(obs, _ui_env)
-        return _fmt_status(obs), getattr(obs, "dirty_yaml", ""), obs.message, _safe_json(p)
+        return _fmt_status(obs, _ui_env), getattr(obs, "dirty_yaml", ""), obs.message, _safe_json(p)
     except Exception as e:
         return f"❌ {e}", "", str(e), _safe_json({"error": str(e)})
 

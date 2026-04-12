@@ -190,18 +190,16 @@ FALLBACK_SEQUENCES: Dict[str, List[dict]] = {
     ],
 }
 
-_fallback_step: Dict[str, int] = {}
+
 
 
 # ── LLM decision function ──────────────────────────────────────────────────────
 
-def get_fallback(task_id: str) -> dict:
-    """Step through the pre-computed optimal SRE workflow."""
+def get_fallback(task_id: str, step: int = 1) -> dict:
+    """Return optimal SRE action for the given step number (1-indexed)."""
     seq = FALLBACK_SEQUENCES.get(task_id, FALLBACK_SEQUENCES["task_1_easy"])
-    idx = _fallback_step.get(task_id, 0)
-    action = seq[min(idx, len(seq) - 1)]
-    _fallback_step[task_id] = idx + 1
-    return action
+    idx = min(step - 1, len(seq) - 1)   # step 1 → seq[0], step 6 → seq[5]
+    return seq[idx]
 
 
 def get_llm_action(
@@ -262,7 +260,7 @@ def get_llm_action(
         return parsed
 
     except Exception:
-        return get_fallback(task_id)
+        return get_fallback(task_id, step)
 
 
 # ── Sanitize action dict before sending to environment ─────────────────────────
@@ -310,8 +308,6 @@ def run_task(task_id: str, http_client: httpx.Client) -> float:
     episode_done: bool   = False
     obs:     dict        = {}
 
-    # Reset fallback counter for this task
-    _fallback_step[task_id] = 0
 
     try:
         # ── Reset environment ──────────────────────────────────────────────

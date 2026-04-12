@@ -8,9 +8,9 @@
       "name": "Ghost Hunter \u2014 Resource Cost Optimisation",
       "difficulty": "easy",
       "runs": [
-        0.45
+        0.88
       ],
-      "average": 0.45
+      "average": 0.88
     },
     "task_2_medium": {
       "name": "Security Patch \u2014 Root Access Elimination",
@@ -29,5 +29,5 @@
       "average": 0.93
     }
   },
-  "overall": 0.77
+  "overall": 0.913
 }
