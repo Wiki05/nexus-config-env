@@ -153,6 +153,8 @@ def log_step(
 
 
 def log_end(success: bool, steps: int, rewards: List[float]) -> None:
+    if not rewards:
+        rewards = [0.01]  # never emit empty list to evaluator (=> 0.0 score)
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}",

@@ -65,7 +65,7 @@ class NexusEnvironment:
         self.current_task_id:  Optional[str]  = None
         self.step_count:       int   = 0
         self.max_steps:        int   = 10
-        self.current_score:    float = 0.0
+        self.current_score:    float = MIN_SCORE  # never 0.0
         self.done:             bool  = False
         self.fix_applied:      bool  = False
         self.proposed_field:   Optional[str] = None
@@ -89,7 +89,7 @@ class NexusEnvironment:
         self.current_scenario  = deepcopy(SCENARIOS[task_id][0])
         self.step_count        = 0
         self.max_steps         = task.max_steps
-        self.current_score     = 0.0
+        self.current_score     = MIN_SCORE  # must never be 0.0 — evaluator may read this
         self.done              = False
         self.fix_applied       = False
         self.proposed_field    = None
@@ -117,7 +117,7 @@ class NexusEnvironment:
         if self.current_scenario is None:
             return (
                 self._get_obs(message="No active episode. Call /reset first."),
-                0.0, False,
+                MIN_SCORE, False,  # never 0.0
                 {"error": "No active episode. Call POST /reset first."},
             )
 
@@ -494,7 +494,7 @@ class NexusEnvironment:
                 config_id="none", dirty_yaml="", telemetry={},
                 message="No active episode.", fixes_applied=[],
                 identified_issues=[], proposed_field=None,
-                current_score=0.0, step=0, done=False, actions_taken=[],
+                current_score=MIN_SCORE, step=0, done=False, actions_taken=[],
             )
         effective_done = done if done is not None else self.done
         return NexusObservation(
@@ -505,7 +505,7 @@ class NexusEnvironment:
             fixes_applied = self.current_scenario.get("fixes_applied", []),
             identified_issues = self.identified_issues,
             proposed_field    = self.proposed_field,
-            current_score = self.current_score,
+            current_score = round(float(max(MIN_SCORE, min(MAX_SCORE, self.current_score))), 3),
             step          = self.step_count,
             done          = effective_done,
             actions_taken = list(self.actions_taken),
