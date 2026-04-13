@@ -29,16 +29,16 @@ except ImportError:
 
 
 # ── Per-action base rewards ────────────────────────────────────────────────────
-# Scaled so sum(rewards) for any episode is strictly inside (0, 1).
-# Perfect 6-step run: 0.06+0.06+0.12+0.09+0.40+0.12 = 0.85 (max possible ≈ 0.92)
+# All values chosen so ANY 6-step episode sum < 1.0  AND  each reward > 0.10.
+# Perfect 6-step sums: easy=0.88, medium=0.93, hard=0.98  (all strictly in (0,1))
 ACTION_REWARDS: Dict[str, float] = {
-    "scan_config":    +0.06,
-    "read_telemetry": +0.06,
-    "identify_issue": +0.12,
-    "propose_fix":    +0.09,
+    "scan_config":    +0.11,
+    "read_telemetry": +0.11,
+    "identify_issue": +0.13,   # base; category bonus added in handler
+    "propose_fix":    +0.11,
     "apply_fix":      +0.00,   # earned dynamically by _handle_apply_fix
-    "verify_fix":     +0.12,
-    "escalate":       +0.04,
+    "verify_fix":     +0.12,   # base; difficulty scale applied in handler
+    "escalate":       +0.11,
     "revert_change":  -0.10,
 }
 
@@ -257,7 +257,7 @@ class NexusEnvironment:
         provided_type = str(action.fix_type or "").lower()
 
         # Complexity bonus: security/stability issues are harder to identify than cost
-        _CATEGORY_BONUS: Dict[str, float] = {"cost": 0.00, "security": 0.02, "stability": 0.01}
+        _CATEGORY_BONUS: Dict[str, float] = {"cost": 0.00, "security": 0.01, "stability": 0.01}
 
         if provided_type == target_type:
             category_bonus = _CATEGORY_BONUS.get(target_type, 0.0)
@@ -349,7 +349,11 @@ class NexusEnvironment:
         # ── Correct field + correct value ──────────────────────────────────
         if provided_f == target_f and provided_v == target_v:
             self._patch_yaml(action)
-            reward = 0.40
+            # Scale apply_fix reward by task difficulty — minimum 0.30, all > 0.10
+            task_obj = TASKS.get(self.current_task_id)
+            diff     = task_obj.difficulty if task_obj else "medium"
+            _APPLY_REWARD: Dict[str, float] = {"easy": 0.30, "medium": 0.33, "hard": 0.37}
+            reward = _APPLY_REWARD.get(diff, 0.33)
             info  = {
                 "action":      "apply_fix",
                 "fix_correct": True,
@@ -404,10 +408,10 @@ class NexusEnvironment:
 
     def _handle_verify_fix(self, base: float) -> Tuple[float, dict]:
         if self.fix_applied:
-            # Scale verify reward by task difficulty — harder task = higher close-out reward
+            # Scale verify reward by task difficulty — all > 0.10, distinct per task
             task = TASKS.get(self.current_task_id)
             difficulty = task.difficulty if task else "medium"
-            _VERIFY_REWARD: Dict[str, float] = {"easy": 0.10, "medium": 0.12, "hard": 0.14}
+            _VERIFY_REWARD: Dict[str, float] = {"easy": 0.12, "medium": 0.13, "hard": 0.14}
             reward = _VERIFY_REWARD.get(difficulty, base)
             info   = {
                 "action":       "verify_fix",
